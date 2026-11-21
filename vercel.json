@@ -1,0 +1,9 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "functions": {
+    "server.py": {
+      "maxDuration": 60,
+      "includeFiles": "{login.html,studyious.html,register-login.css,script.js,studyious.css,studyious.js}"
+    }
+  }
+}

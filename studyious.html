@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Studyious</title>
+    <link href="https://cdn.boxicons.com/3.0.8/fonts/basic/boxicons.min.css" rel="stylesheet">
+    <link href="https://cdn.boxicons.com/3.0.8/fonts/filled/boxicons-filled.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="/studyious.css">
+</head>
+<body>
+    <nav class="sidebar close">
+        <header>
+            <button type="button" class="profile-avatar" id="profileAvatar"
+                    title="Change profile picture" aria-label="Change profile picture">
+                <span id="avatarInitial">?</span>
+                <img id="avatarImage" alt="Profile picture" hidden>
+            </button>
+
+            <i class="bx bx-chevron-right toggle"></i>
+        </header>
+
+        <div class="menu-bar">
+            <div class="menu">
+                <li class="nav-link">
+                    <a href="#" class="nav-item active" data-view="home">
+                        <i class="bx bx-home-alt icon"></i>
+                        <span class="text nav-text">Home</span>
+                    </a>
+                </li>
+                <ul class="menu-links">
+                    <li class="nav-link">
+                        <a href="#" class="nav-item" data-view="files">
+                            <i class="bx bx-folder-plus icon"></i>
+                            <span class="text nav-text">Files</span>
+                        </a>
+                    </li>
+                    <li class="nav-link">
+                        <a href="#" class="nav-item" data-view="quizzes">
+                            <i class="bx bx-book-content icon"></i>
+                            <span class="text nav-text">Quizzes</span>
+                        </a>
+                    </li>
+                    <li class="nav-link">
+                        <a href="#" class="nav-item" data-view="settings">
+                            <i class="bx bx-cog icon"></i>
+                            <span class="text nav-text">Settings</span>
+                        </a>
+                    </li>
+                    <li class="nav-link">
+                        <a href="#" id="logoutLink">
+                            <i class="bx bx-arrow-out-left-square-half icon"></i>
+                            <span class="text nav-text">Log Out</span>
+                        </a>
+                    </li>
+                    <li class="mode">
+                        <div class="moon-sun">
+                            <i class="bx bx-moon icon moon"></i>
+                            <i class="bx bx-sun icon sun"></i>
+                        </div>
+                        <span class="text nav-text">Dark Mode</span>
+
+                        <div class="toggle-switch">
+                            <span class="switch"></span>
+                        </div>
+                    </li>
+                </ul>
+            </div>
+        </div>
+    </nav>
+
+    <main class="dashboard">
+        <section class="view active" id="home-view">
+            <h1 class="view-title">Home</h1>
+            <p class="view-subtitle">Add questions manually or upload a .docx / PDF file — answerable questions are generated automatically.</p>
+
+            <div class="home-grid">
+                <div class="panel">
+                    <h2>Add a question manually</h2>
+                    <div class="manual-input">
+                        <label class="field">
+                            <span>Question</span>
+                            <input type="text" id="inputItems" placeholder="e.g. What is photosynthesis?">
+                        </label>
+                        <label class="field">
+                            <span>Answer</span>
+                            <input type="text" id="answerItems" placeholder="e.g. How plants make food using light">
+                        </label>
+                        <button type="button" id="insertBtn" class="action-btn">Insert Q&amp;A</button>
+                        <p class="finalize-status" id="manualStatus" role="status" aria-live="polite"></p>
+                    </div>
+                    <p class="counter">Question Counter: <span id="counter">0</span></p>
+                </div>
+
+                <div class="panel">
+                    <h2>Or upload a file</h2>
+                    <div class="file-upload">
+                        <input type="file" id="file" class="uploadFile" accept=".docx,.pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/pdf">
+                        <label for="file">Please drop your files here (.docx and .pdf files)</label>
+                    </div>
+                    <p class="upload-status" id="uploadStatus" role="status" aria-live="polite"></p>
+                </div>
+
+                <div class="panel questionnaire-panel">
+                    <h2>Questionnaire</h2>
+                    <div class="display-questionnaire">
+                        <p id="questions">Any input will be displayed here</p>
+                    </div>
+                    <div class="finalize-row">
+                        <input type="text" id="quizTitle" placeholder="Quiz title (optional)">
+                        <button type="button" id="finalizeBtn" class="action-btn">Finalize your questions</button>
+                    </div>
+                    <button type="button" id="deleteQuestionsBtn" class="small-btn delete-questions-btn">Delete questions</button>
+                    <p class="finalize-status" id="finalizeStatus" role="status" aria-live="polite"></p>
+                </div>
+            </div>
+        </section>
+
+
+        <section class="view" id="files-view">
+            <h1 class="view-title">Files</h1>
+            <p class="view-subtitle">Documents you have uploaded. Load their questions into Home or delete them.</p>
+            <div id="filesList" class="item-list"><p class="empty">Loading files...</p></div>
+        </section>
+
+    
+        <section class="view" id="quizzes-view">
+            <h1 class="view-title">Quizzes</h1>
+            <p class="view-subtitle">Quizzes you have finalized from your questions.</p>
+            <div id="quizzesList" class="item-list"><p class="empty">Loading quizzes...</p></div>
+
+            <div class="panel quiz-session" id="quizSession" hidden>
+                <div class="quiz-session-head">
+                    <h2 id="quizSessionTitle">Quiz</h2>
+                    <button type="button" id="closeQuizBtn" class="small-btn">Close quiz</button>
+                </div>
+                <p id="quizProgress" class="quiz-progress"></p>
+                <div id="quizQuestion" class="quiz-question"></div>
+                <div class="answer-entry" id="answerEntry">
+                    <input type="text" id="quizAnswerInput" placeholder="Type your answer here...">
+                    <button type="button" id="checkAnswerBtn" class="action-btn">Check answer</button>
+                </div>
+                <p id="quizFeedback" class="quiz-feedback" hidden></p>
+                <div class="quiz-actions">
+                    <button type="button" id="gotItBtn" class="action-btn" hidden>I knew it</button>
+                    <button type="button" id="reviewBtn" class="small-btn" hidden>Needs review</button>
+                    <button type="button" id="nextQuestionBtn" class="action-btn" hidden>Next question</button>
+                </div>
+            </div>
+        </section>
+
+
+        <section class="view" id="settings-view">
+            <h1 class="view-title">Settings</h1>
+            <p class="view-subtitle">Your account and workspace preferences.</p>
+            <div class="panel settings-panel">
+                <h2>Account</h2>
+                <p><strong>Name:</strong> <span id="settingsName">...</span></p>
+                <p><strong>Email:</strong> <span id="settingsEmail">...</span></p>
+            </div>
+            <div class="panel settings-panel">
+                <h2>Preferences</h2>
+                <p><strong>Appearance:</strong> <span id="settingsTheme">Light</span> (use the Dark Mode switch in the sidebar)</p>
+                <button type="button" id="changeAvatarBtn" class="small-btn">Change profile picture</button>
+                <button type="button" id="clearWorkingBtn" class="small-btn">Clear working questions on this device</button>
+                <p class="finalize-status" id="settingsStatus" role="status" aria-live="polite"></p>
+            </div>
+        </section>
+    </main>
+
+
+    <div class="modal-backdrop" id="avatarModal" hidden>
+        <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="avatarModalTitle">
+            <h2 id="avatarModalTitle">Profile picture</h2>
+            <p class="modal-hint">Choose an image, then drag and zoom to crop it square.</p>
+
+            <div class="crop-stage">
+                <canvas id="avatarCanvas" width="320" height="320"></canvas>
+                <span class="crop-placeholder" id="cropPlaceholder">No image selected</span>
+            </div>
+
+            <input type="file" id="avatarFileInput" accept="image/png,image/jpeg,image/webp" hidden>
+
+            <div class="crop-controls">
+                <label for="avatarFileInput" class="action-btn">Choose image</label>
+                <label class="zoom-control" for="avatarZoom">
+                    Zoom
+                    <input type="range" id="avatarZoom" min="100" max="300" value="100">
+                </label>
+            </div>
+
+            <p class="finalize-status" id="avatarStatus" role="status" aria-live="polite"></p>
+
+            <div class="modal-actions">
+                <button type="button" id="saveAvatarBtn" class="action-btn">Save picture</button>
+                <button type="button" id="removeAvatarBtn" class="small-btn">Remove</button>
+                <button type="button" id="closeAvatarBtn" class="small-btn">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+
+    <div class="modal-backdrop" id="logoutModal" hidden>
+        <div class="modal-card logout-card" role="alertdialog" aria-modal="true"
+             aria-labelledby="logoutTitle" aria-describedby="logoutMessage">
+            <i id="logoutIcon" class="bxf bx-arrow-out-left-square-half" aria-hidden="true"></i>
+            <h2 id="logoutTitle">Log out?</h2>
+            <p class="modal-hint" id="logoutMessage">You'll need to log in again to access your quizzes.</p>
+            <div class="modal-actions">
+                <button type="button" id="logoutConfirmBtn" class="action-btn">Log out</button>
+                <button type="button" id="logoutCancelBtn" class="small-btn">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+
+    <div class="modal-backdrop" id="confirmModal" hidden>
+        <div class="modal-card confirm-card" role="alertdialog" aria-modal="true"
+             aria-labelledby="confirmTitle" aria-describedby="confirmMessage">
+            <i id="confirmIcon" class="bxf bx-trash" aria-hidden="true"></i>
+            <h2 id="confirmTitle">Delete file?</h2>
+            <p class="modal-hint" id="confirmMessage">This will also remove its questions from your working list.</p>
+            <div class="modal-actions">
+                <button type="button" id="confirmDeleteBtn" class="action-btn">Delete</button>
+                <button type="button" id="confirmCancelBtn" class="small-btn">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="studyious.js"></script>
+</body>
+</html>

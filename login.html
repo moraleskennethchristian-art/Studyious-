@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>STUDYIOUS!</title>
+    <link rel="stylesheet" href="register-login.css">
+    <link href="https://cdn.boxicons.com/3.0.8/fonts/basic/boxicons.min.css" rel="stylesheet">
+    <link href="https://cdn.boxicons.com/3.0.8/fonts/filled/boxicons-filled.min.css" rel="stylesheet">
+</head>
+<body>
+    <header>
+        <a href="" class="studyious">STUDYIOUS!</a>
+
+        <nav>
+            <a href="#">Home</a>
+            <a href="#">Contact Us</a>
+        </nav>
+
+        <div class="user-auth">
+            <button type="button" class="login-btn-modal">Login</button>
+        </div>
+    </header>
+
+    <section class="site-descriptions">
+        <h1>Study smarter with STUDYIOUS!</h1>
+        <div class="description-grid">
+            <article class="description">
+                <i class="bx bx-book-open"></i>
+                <h3>Build quizzes from your notes</h3>
+                <p>Turn the questions you type or the documents you upload into a quiz in seconds.</p>
+            </article>
+            <article class="description">
+                <i class="bx bx-cloud-upload"></i>
+                <h3>Upload your study files</h3>
+                <p>Drop in a .docx or PDF file and we read the text automatically so you can focus on studying.</p>
+            </article>
+            <article class="description">
+                <i class="bx bx-trophy"></i>
+                <h3>Track your progress</h3>
+                <p>Keep your questions organized in one place and review them whenever you need a refresher.</p>
+            </article>
+        </div>
+    </section>
+
+    <div class="auth-modal">
+        <button type="button" class="close-btn-modal"><i class="bxf bx-x"></i></button>
+        <div class="form-box login">
+            <h2>Login</h2>
+            <form class="loginForm">
+                <div class="input-box">
+                    <input type="email" name="email" placeholder="Email" required>
+                    <i class="bxf bx-envelope bx-remove-padding" style="color: white;"></i>
+                </div>
+                <div class="input-box">
+                    <input type="password" name="password" placeholder="Password" required>
+                    <i class="bxf bx-lock bx-remove-padding" style="color: white;"></i>
+                </div>
+                <button type="submit" name="login_btn" class="btn">Log In</button>
+                <p>Don't have an account? <a href="#" class="register-link">Register</a></p>
+            </form>
+        </div>
+        <div class="form-box register">
+            <h2>Register</h2>
+            <form class="registerForm">
+                <div class="input-box">
+                    <input type="text" name="name" placeholder="Name" required>
+                    <i class="bx bx-user"></i>
+                </div>
+                <div class="input-box">
+                    <input type="email" name="email" placeholder="Email" required>
+                    <i class="bxf bx-envelope bx-remove-padding" style="color: white;"></i>
+                </div>
+                <div class="input-box">
+                    <input type="password" name="password" placeholder="Password" minlength="6" required>
+                    <i class="bxf bx-lock bx-remove-padding" style="color: white;"></i>
+                </div>
+                <button type="submit" name="register_btn" class="btn">Register</button>
+                <p>Already have an account? <a href="#" class="login-link">Login</a></p>
+            </form>
+        </div>
+    </div>
+
+    <!-- Authentication result pop-up -->
+    <div class="feedback-overlay" id="authFeedback" hidden>
+        <div class="feedback-card" id="feedbackCard" role="alertdialog" aria-modal="true"
+             aria-labelledby="feedbackTitle" aria-describedby="feedbackMessage">
+            <i id="feedbackIcon" class="bxf bx-check-circle" aria-hidden="true"></i>
+            <h3 id="feedbackTitle"></h3>
+            <p id="feedbackMessage"></p>
+            <button type="button" id="feedbackOk" class="feedback-ok">OK</button>
+        </div>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+
+</html>
