@@ -256,7 +256,7 @@ nav a:hover {
     transition: none;
 }
 
-/* Offsets match the modal padding so this panel has the same width as the login panel. */
+
 .auth-modal .form-box.register {
     position: absolute;
     top: 30px;
@@ -376,6 +376,20 @@ nav a:hover {
         left: 20px;
         right: 20px;
     }
+
+    
+    .auth-modal .form-box.login,
+    .auth-modal.slide .form-box.login,
+    .auth-modal .form-box.register,
+    .auth-modal.slide .form-box.register {
+        transform: none !important;
+        transition: none !important;
+    }
+
+    .auth-modal .form-box.register { display: none; }
+    .auth-modal.slide .form-box.login { display: none; }
+    .auth-modal.slide .form-box.register { display: block; }
+
     .form-box h2 { font-size: 28px; }
 
     .input-box {
