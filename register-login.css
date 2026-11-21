@@ -1,3 +1,7 @@
+* {
+    box-sizing: border-box;
+}
+
 body {
     margin: 0;
     min-height: 100vh;
@@ -131,14 +135,15 @@ nav a:hover {
 
 .input-box input {
     width: 300px;
-    height: 15px;
-    background:  transparent;
+    max-width: 100%;
+    height: 50px;
+    background: transparent;
     border: 2px solid rgba(255, 255, 255, .3);
     outline: none;
     border-radius: 40px;
     font-size: 18px;
     color: white;
-    padding: 20px 45px 20px 20px;
+    padding: 0 45px 0 20px;
 }
 
 .input-box input::placeholder {
@@ -207,31 +212,36 @@ nav a:hover {
 
 .auth-modal {
     position: fixed;
-    width:450px;
-    height: 380px;
-    margin: auto;
+    top: 50%;
+    left: 50%;
+    width: 450px;
+    max-width: calc(100% - 32px);
+    height: auto;
+    min-height: 390px;
+    max-height: calc(100vh - 32px);
+    margin: 0;
     padding: 30px;
     border: 1px solid #ffffff55;
     border-radius: 20px;
     background: #ffffff20;
     backdrop-filter: blur(15px);
     color: white;
-    inset: 0;
     text-align: center;
     box-shadow: 0 20px 50px #003;
     display: flex;
     align-items: center;
-    overflow: hidden;
-    transform: scale(0);
+    overflow-x: hidden;
+    overflow-y: auto;
+    transform: translate(-50%, -50%) scale(0);
     transition: height .2s ease transform .5s ease;
 }
 
 .auth-modal.show {
-    transform: scale(1);
+    transform: translate(-50%, -50%) scale(1);
 }
 
 .auth-modal.slide {
-    height:470px;
+    min-height: 470px;
 }
 
  .auth-modal.slide .form-box.login {
@@ -254,7 +264,7 @@ nav a:hover {
     transition: transform .18s ease;
 }
 
-/* --- Authentication result pop-up ------------------------------------------ */
+
 .feedback-overlay[hidden] { display: none; }
 
 .feedback-overlay {
@@ -301,28 +311,34 @@ nav a:hover {
 
 .feedback-card .feedback-ok:hover { background: #ddd6fe; }
 
-/* --- Mobile / small screens ------------------------------------------------ */
+
 @media (max-width: 700px) {
     header {
+        width: 100%;
         padding: 14px 16px;
+        gap: 12px;
         justify-content: space-between;
     }
 
     .studyious {
         margin-right: 0;
         font-size: 24px;
+        white-space: nowrap;
     }
 
-    nav a {
-        margin-left: 14px;
-        font-size: 14px;
+    header nav { display: none; }
+
+    .user-auth {
+        margin-left: auto;
+        flex-shrink: 0;
     }
 
-    .user-auth { margin-left: 0; }
     .login-btn-modal {
-        height: 36px;
-        padding: 0 16px;
+        height: 38px;
+        padding: 0 18px;
         font-size: 14px;
+        white-space: nowrap;
+        flex-shrink: 0;
     }
 
     .site-descriptions { padding: 90px 16px 30px; }
@@ -337,7 +353,7 @@ nav a:hover {
         width: calc(100% - 32px);
         max-width: 450px;
         height: auto;
-        min-height: 380px;
+        min-height: 390px;
         padding: 26px 20px;
     }
 
@@ -346,26 +362,30 @@ nav a:hover {
         min-height: 470px;
     }
 
-    .auth-modal .form-box { padding: 10px 4px; }
+    .auth-modal .form-box { padding: 8px 2px; }
     .form-box h2 { font-size: 28px; }
+
+    .input-box {
+        height: 48px;
+        margin: 18px 0;
+    }
 
     .input-box input,
     .form-box.register .input-box input {
         width: 100%;
         max-width: 100%;
+        height: 48px;
         box-sizing: border-box;
-        padding-right: 42px;
+        padding: 0 42px 0 14px;
+        font-size: 16px;
     }
 
     .form-box.register .input-box i { right: 14px; }
     .form-box.register .btn { width: 100%; }
 
-    /* Percentage-based slides work at any modal width. */
+    
     .auth-modal .form-box.register { transform: translateX(100%); }
     .auth-modal.slide .form-box.register { transform: translateX(0); }
     .auth-modal.slide .form-box.login { transform: translateX(-100%); }
 }
 
-@media (max-width: 480px) {
-    header nav { display: none; }
-}

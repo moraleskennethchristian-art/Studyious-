@@ -1,6 +1,8 @@
 const body = document.querySelector("body");
-const sidebar = body.querySelector(".sidebar");
+const sidebar = document.getElementById("sidebar");
 const toggle = body.querySelector(".toggle");
+const mobileMenuBtn = document.getElementById("mobileMenuBtn");
+const sidebarOverlay = document.getElementById("sidebarOverlay");
 const modeSwitch = body.querySelector(".toggle-switch");
 const uploadInput = document.querySelector(".uploadFile");
 const uploadStatus = document.getElementById("uploadStatus");
@@ -87,12 +89,30 @@ fetch("/api/me", { credentials: "same-origin" })
 
 if (localStorage.getItem(THEME_KEY) === "dark") body.classList.add("dark");
 
-toggle.addEventListener("click", () => sidebar.classList.toggle("close"));
+function setSidebarOpen(open) {
+    sidebar.classList.toggle("close", !open);
+    if (mobileMenuBtn) mobileMenuBtn.setAttribute("aria-expanded", String(open));
+}
+
+toggle.addEventListener("click", (event) => {
+    event.stopPropagation();
+    if (window.innerWidth <= 700) setSidebarOpen(sidebar.classList.contains("close"));
+    else sidebar.classList.toggle("close");
+});
+
+if (mobileMenuBtn) {
+    mobileMenuBtn.addEventListener("click", (event) => {
+        event.stopPropagation();
+        setSidebarOpen(true);
+    });
+}
+
+if (sidebarOverlay) sidebarOverlay.addEventListener("click", () => setSidebarOpen(false));
 
 // On phones the sidebar is a drawer, so tapping the page closes it.
 document.querySelector(".dashboard").addEventListener("click", () => {
     if (window.innerWidth <= 700 && !sidebar.classList.contains("close")) {
-        sidebar.classList.add("close");
+        setSidebarOpen(false);
     }
 });
 
@@ -110,7 +130,7 @@ const views = document.querySelectorAll(".view");
 function showView(name) {
     views.forEach((view) => view.classList.toggle("active", view.id === `${name}-view`));
     navItems.forEach((item) => item.classList.toggle("active", item.dataset.view === name));
-    if (window.innerWidth <= 700) sidebar.classList.add("close");
+    if (window.innerWidth <= 700) setSidebarOpen(false);
 
     if (name === "files") loadFiles();
     if (name === "quizzes") loadQuizzes();
@@ -898,6 +918,7 @@ avatarModal.addEventListener("click", (event) => {
 });
 document.addEventListener("keydown", (event) => {
     if (event.key !== "Escape") return;
+    if (window.innerWidth <= 700 && !sidebar.classList.contains("close")) setSidebarOpen(false);
     if (!avatarModal.hidden) closeAvatarModal();
     if (!logoutModal.hidden) closeLogoutModal();
     if (!confirmModal.hidden) closeConfirmDialog();
