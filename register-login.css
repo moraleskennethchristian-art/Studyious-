@@ -122,9 +122,14 @@ nav a:hover {
     width: 365px;
 }
 
+/* Both panels occupy the same full-modal frame, so percentage slides match exactly. */
 .auth-modal .form-box {
+    position: absolute;
+    inset: 0;
     width: 100%;
-    padding: 40px;
+    height: 100%;
+    padding: 70px;
+    overflow-y: auto;
 }
 
 
@@ -237,8 +242,7 @@ nav a:hover {
     box-shadow: 0 20px 50px #003;
     display: flex;
     align-items: center;
-    overflow-x: hidden;
-    overflow-y: auto;
+    overflow: hidden;
     transform: translate(-50%, -50%) scale(0);
     transition: height .2s ease transform .5s ease;
 }
@@ -251,23 +255,23 @@ nav a:hover {
     min-height: 470px;
 }
 
- .auth-modal.slide .form-box.login {
-    transform: translateX(-470px);
-    transition:  none;
- }
-
-.auth-modal .form-box.register {
-    position: absolute;
-    transform: translateX(400px);
-}
-
 .auth-modal .form-box.login {
-    transform: translateX(0px);
+    transform: translateX(0);
     transition: transform .18s ease;
 }
 
+.auth-modal.slide .form-box.login {
+    transform: translateX(-100%);
+    transition: none;
+}
+
+.auth-modal .form-box.register {
+    transform: translateX(100%);
+    transition: none;
+}
+
 .auth-modal.slide .form-box.register {
-    transform: translateX(-70px);
+    transform: translateX(0);
     transition: transform .18s ease;
 }
 
@@ -369,7 +373,7 @@ nav a:hover {
         min-height: 470px;
     }
 
-    .auth-modal .form-box { padding: 8px 2px; }
+    .auth-modal .form-box { padding: 34px 22px 26px; }
     .form-box h2 { font-size: 28px; }
 
     .input-box {
@@ -389,10 +393,5 @@ nav a:hover {
 
     .form-box.register .input-box i { right: 14px; }
     .form-box.register .btn { width: 100%; }
-
-    
-    .auth-modal .form-box.register { transform: translateX(100%); }
-    .auth-modal.slide .form-box.register { transform: translateX(0); }
-    .auth-modal.slide .form-box.login { transform: translateX(-100%); }
 }
 
