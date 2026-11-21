@@ -62,18 +62,25 @@ header {
     top: 0;
     left: 0;
     width: 100%;
-    padding: 20px 100px;
+    padding: 20px clamp(20px, 5vw, 100px);
     display: flex;
     align-items: center;
+    gap: 32px;
     z-index: 99;
     backdrop-filter: blur(20px);
+}
+
+header nav {
+    display: flex;
+    align-items: center;
+    gap: 32px;
+    margin-left: auto;
 }
 
 nav a {
     color: white;
     text-decoration: none;
     font-weight: 500;
-    margin-left: 40px;
 }
 
 nav a:hover {
@@ -85,11 +92,11 @@ nav a:hover {
     color: white;
     text-decoration: none;
     font-weight: 700;
-    margin-right: 800px;
+    flex-shrink: 0;
 }
 
 .user-auth {
-    margin-left: 40px;
+    flex-shrink: 0;
 }
 
 
