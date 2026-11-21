@@ -122,14 +122,9 @@ nav a:hover {
     width: 365px;
 }
 
-/* Both panels occupy the same full-modal frame, so percentage slides match exactly. */
 .auth-modal .form-box {
-    position: absolute;
-    inset: 0;
     width: 100%;
-    height: 100%;
-    padding: 70px;
-    overflow-y: auto;
+    padding: 40px;
 }
 
 
@@ -252,7 +247,7 @@ nav a:hover {
 }
 
 .auth-modal.slide {
-    min-height: 470px;
+    min-height: min(560px, calc(100vh - 32px));
 }
 
 .auth-modal .form-box.login {
@@ -265,7 +260,13 @@ nav a:hover {
     transition: none;
 }
 
+/* Offsets match the modal padding so this panel has the same width as the login panel. */
 .auth-modal .form-box.register {
+    position: absolute;
+    top: 30px;
+    left: 30px;
+    right: 30px;
+    width: auto;
     transform: translateX(100%);
     transition: none;
 }
@@ -373,7 +374,12 @@ nav a:hover {
         min-height: 470px;
     }
 
-    .auth-modal .form-box { padding: 34px 22px 26px; }
+    .auth-modal .form-box { padding: 8px 2px; }
+    .auth-modal .form-box.register {
+        top: 26px;
+        left: 20px;
+        right: 20px;
+    }
     .form-box h2 { font-size: 28px; }
 
     .input-box {
