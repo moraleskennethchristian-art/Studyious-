@@ -32,6 +32,33 @@ MAX_GRAPH_TOPICS = 40  # Keep the concept graph small and fast to traverse
 MAX_GRAPH_NEIGHBORS = 8  # Strongest related topics kept per node
 MAX_AVATAR_BYTES = 5 * 1024 * 1024  # 5 MB
 
+LIGATURES = str.maketrans({
+    "ﬁ": "fi", "ﬂ": "fl", "ﬃ": "ffi", "ﬄ": "ffl", "ﬅ": "st", "ﬆ": "st",
+})
+WEAK_ANSWER_STARTS = {
+    "it", "this", "that", "these", "those", "they", "them", "there", "here",
+    "which", "who", "what", "also", "above", "below", "following", "same",
+}
+
+
+def normalize_extracted_text(text):
+    """Repair common PDF/DOCX extraction artefacts before candidate selection."""
+    text = text.replace("\u00ad", "").translate(LIGATURES)
+    text = text.replace("：", ":").replace("–", "-").replace("—", "-")
+    text = re.sub(r"([A-Za-z])-\s*\n\s*([A-Za-z])", r"\1\2", text)
+    return "\n".join(" ".join(line.split()) for line in text.splitlines())
+
+
+def remove_repeated_lines(text, minimum=3, max_length=80):
+    """Drop headers/footers repeated on several pages."""
+    lines = [line.strip() for line in text.splitlines()]
+    counts = Counter(line for line in lines if line)
+    repeated = {
+        line for line, count in counts.items()
+        if count >= minimum and len(line) <= max_length
+    }
+    return "\n".join(line for line in lines if line and line not in repeated)
+
 
 def load_local_env():
     env_path = BASE_DIR / ".env"
@@ -406,18 +433,52 @@ def allowed_file(filename, content_type):
 
 
 def read_docx(stream):
+    """Read paragraphs, headings, and tables in document order."""
     if Document is None:
         raise RuntimeError("python-docx is not installed. Run: pip install python-docx")
     document = Document(stream)
-    return "\n".join(p.text for p in document.paragraphs if p.text.strip())
+    lines = []
+
+    try:
+        from docx.table import Table
+        from docx.text.paragraph import Paragraph
+    except ImportError:
+        lines.extend(p.text for p in document.paragraphs if p.text.strip())
+        for table in document.tables:
+            for row in table.rows:
+                cells = [" ".join(cell.text.split()) for cell in row.cells]
+                if any(cells):
+                    lines.append(" | ".join(cells))
+        return normalize_extracted_text("\n".join(lines))
+
+    for child in document.element.body.iterchildren():
+        if child.tag.endswith("}p"):
+            paragraph = Paragraph(child, document)
+            text = paragraph.text.strip()
+            if text:
+                lines.append(text)
+        elif child.tag.endswith("}tbl"):
+            table = Table(child, document)
+            for row in table.rows:
+                cells = [" ".join(cell.text.split()) for cell in row.cells if cell.text.strip()]
+                if cells:
+                    lines.append(" | ".join(cells))
+
+    return normalize_extracted_text("\n".join(lines))
 
 
 def read_pdf(stream):
     if PdfReader is None:
         raise RuntimeError("pypdf is not installed. Run: pip install pypdf")
     reader = PdfReader(stream)
-    text = "\n".join((page.extract_text() or "") for page in reader.pages)
-    return "\n".join(line.strip() for line in text.splitlines() if line.strip())
+    pages = []
+    for page in reader.pages:
+        try:
+            pages.append(page.extract_text(extraction_mode="layout") or "")
+        except TypeError:
+            pages.append(page.extract_text() or "")
+    text = normalize_extracted_text("\n".join(pages))
+    return remove_repeated_lines(text)
 
 
 # Key-points remind when user does file upload for setting up quiz
@@ -429,7 +490,7 @@ STOP_WORDS = set(
     above below up down out off again further once here there when where why how all any both
     each few more most other some such no nor not only own same so too very can will just don
     should now also may might must shall would could does did doing have has had having do
-    we you they he she i my our your their his her its which who whom what""".split()
+    we you they he she i my our your their his her its which who whom what used uses using""".split()
 )
 SIGNAL_WORDS = (
     "important", "key", "main", "primary", "major", "significant", "essential", "critical",
@@ -443,6 +504,11 @@ NOISE_PATTERNS = (
     r"^chapter\s+\d+", r"^figure\s+\d+", r"^section\s+\d+", r"^\s*[-=_*]{3,}\s*$",
 )
 LIST_MARKER = re.compile(r"^(?:[-•*–—]|\d+[.)]|[a-z][.)])\s+")
+SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+(?=[A-Z0-9])")
+
+
+def split_sentences(line):
+    return [part.strip() for part in SENTENCE_SPLIT.split(line) if part.strip()]
 
 
 def split_into_candidates(text):
@@ -461,7 +527,18 @@ def split_into_candidates(text):
         if not line:
             flush()
             continue
-        if buffer and len(buffer) > 40 and not re.search(r"[.!?;:]$", buffer) and not LIST_MARKER.match(line):
+        if LIST_MARKER.match(line) or " | " in line or line.endswith(":"):
+            flush()
+            candidates.append(line)
+            continue
+
+        sentences = split_sentences(line)
+        if len(sentences) > 1:
+            flush()
+            candidates.extend(sentences)
+            continue
+
+        if buffer and len(buffer) > 40 and not re.search(r"[.!?;:]$", buffer):
             buffer += " " + line
         else:
             flush()
@@ -472,23 +549,63 @@ def split_into_candidates(text):
 
 def is_noise(line):
     lower = line.lower()
-    if len(line) < 25 or len(line) > 400:
+    if len(line) < 12 or len(line) > 400:
         return True
     words = re.findall(r"[A-Za-z]+", line)
-    if len(words) < 5 or line.isupper():
+    if len(words) < 3 or (line.isupper() and len(line) > 80):
+        return True
+    if len(line) < 25 and not (
+        LIST_MARKER.match(line)
+        or line.endswith(":")
+        or re.search(r"\b(is|are|was|were|means|refers to|defined as|uses|follows)\b", lower)
+    ):
         return True
     return any(re.search(pattern, lower) for pattern in NOISE_PATTERNS)
 
 
+def stem_word(word):
+    """Small local stemmer: groups simple plurals and inflections."""
+    if len(word) <= 4:
+        return word
+    if word.endswith("ies"):
+        return word[:-3] + "y"
+    if word.endswith("ing") and len(word) > 6:
+        return word[:-3]
+    if word.endswith("ed") and len(word) > 5:
+        return word[:-2]
+    if word.endswith("es") and len(word) > 5:
+        return word[:-2]
+    if word.endswith("s") and len(word) > 4:
+        return word[:-1]
+    return word
+
+
+def word_tokens(text):
+    return [
+        stem_word(word)
+        for word in re.findall(r"[a-z]{4,}", text.lower())
+        if word not in STOP_WORDS
+    ]
+
+
+def line_topic_terms(line, topics):
+    tokens = word_tokens(line)
+    terms = set(tokens)
+    terms.update(f"{first} {second}" for first, second in zip(tokens, tokens[1:]))
+    return {term for term in topics if term in terms}
+
+
 def topic_words(candidates):
     counts = Counter()
+    pair_counts = Counter()
     for line in candidates:
-        words = {
-            word for word in re.findall(r"[a-z]{4,}", line.lower())
-            if word not in STOP_WORDS
-        }
-        counts.update(words)
-    return {word for word, count in counts.items() if count >= 2}
+        tokens = word_tokens(line)
+        counts.update(set(tokens))
+        pair_counts.update({f"{a} {b}" for a, b in zip(tokens, tokens[1:])})
+
+    topics = {word for word, count in counts.items() if count >= 2}
+    topics.update(pair for pair, count in pair_counts.items() if count >= 2)
+    return topics
 
 # Build an adjacency list of topics that occur together in source lines
 def build_concept_graph(text):
@@ -500,14 +617,12 @@ def build_concept_graph(text):
     if len(topics) > MAX_GRAPH_TOPICS:
         counts = Counter()
         for line in candidates:
-            counts.update(
-                {word for word in re.findall(r"[a-z]{4,}", line.lower()) if word in topics}
-            )
+            counts.update(line_topic_terms(line, topics))
         topics = {word for word, _ in counts.most_common(MAX_GRAPH_TOPICS)}
 
     pair_counts = Counter()
     for line in candidates:
-        terms = sorted({word for word in re.findall(r"[a-z]{4,}", line.lower()) if word in topics})
+        terms = sorted(line_topic_terms(line, topics))
         for pair in combinations(terms, 2):
             pair_counts[pair] += 1
 
@@ -540,7 +655,7 @@ def score_line(line, topics):
         score += 2
     if re.search(r"\b(first|second|third|next|then|finally|in conclusion|in summary|overall)\b", lower):
         score += 2
-    if topics & set(re.findall(r"[a-z]{4,}", lower)):
+    if line_topic_terms(line, topics):
         score += 2
     if 40 <= len(line) <= 220:
         score += 2
@@ -598,7 +713,24 @@ def extract_key_points(text, limit=MAX_KEY_POINTS):
         return [line for line in candidates if len(line) >= 15][:limit]
 
     
-    selected = selection_top(scored, limit, key=lambda item: (-item[0], item[1]))
+    sections = min(4, max(1, limit))
+    width = max(1, (len(scored) + sections - 1) // sections)
+    buckets = [scored[start:start + width] for start in range(0, len(scored), width)]
+    ranked_buckets = [
+        selection_sort(bucket, key=lambda item: (-item[0], item[1]))
+        for bucket in buckets
+    ]
+
+    selected = []
+    for position in range(width):
+        for bucket in ranked_buckets:
+            if position < len(bucket):
+                selected.append(bucket[position])
+                if len(selected) >= limit:
+                    break
+        if len(selected) >= limit:
+            break
+
     selected = selection_sort(selected, key=lambda item: item[1])
     return [line for _, _, line in selected]
 
@@ -664,7 +796,10 @@ def make_cloze_question(point, topics):
     if not candidates:
         return None
 
-    preferred = [word for word in candidates if word.lower() in topics and len(word) >= 6]
+    preferred = [
+        word for word in candidates
+        if stem_word(word.lower()) in topics and len(word) >= 6
+    ]
     pick = sorted(preferred or candidates, key=len, reverse=True)[0]
     cloze = re.sub(r"\b" + re.escape(pick) + r"\b", "_____", point, count=1, flags=re.IGNORECASE)
     if cloze == point:
@@ -672,36 +807,133 @@ def make_cloze_question(point, topics):
     return {"question": f"Fill in the blank: {cloze}", "answer": pick}
 
 
+def make_complexity_question(point):
+    match = re.match(
+        r"^(.{3,70}?)\s+(?:runs|operates|has|takes|is)\s+in\s+(O\([^)]+\)|Θ\([^)]+\)|Ω\([^)]+\))",
+        point,
+        re.IGNORECASE,
+    )
+    if not match:
+        return None
+    subject = clean_subject(match.group(1))
+    if len(subject) < 3:
+        return None
+    question = f"What is the time complexity of {subject}?"
+    return {"question": question[0].upper() + question[1:], "answer": match.group(2)}
+
+
+def make_relation_question(point):
+    important = re.match(r"^(.{3,70}?)\s+is\s+important\s+because\s+(.+)$", point, re.IGNORECASE)
+    if important:
+        subject = clean_subject(important.group(1))
+        answer = important.group(2).strip(" .;:")
+        if 3 <= len(subject) <= 70 and 5 <= len(answer) <= 220:
+            question = f"Why is {subject} important?"
+            return {"question": question[0].upper() + question[1:], "answer": answer}
+
+    verbs = {
+        "causes": "cause", "produces": "produce", "leads to": "lead to",
+        "results in": "result in", "follows": "follow", "uses": "use",
+        "requires": "require", "contains": "contain", "supports": "support",
+    }
+    patterns = (
+        (
+            r"^(.{3,70}?)\s+(?:is|are)\s+used\s+to\s+(.+)$",
+            lambda subject, _verb, answer: (f"What is {subject} used for?", f"To {answer}"),
+        ),
+        (
+            r"^(.{3,70}?)\s+(causes|produces|leads to|results in|follows|uses|requires|contains|supports)\s+(.+)$",
+            lambda subject, verb, answer: (f"What does {subject} {verbs[verb.lower()]}?", answer),
+        ),
+    )
+
+    for pattern, build in patterns:
+        match = re.match(pattern, point, re.IGNORECASE)
+        if not match:
+            continue
+        subject = clean_subject(match.group(1))
+        answer = re.split(r",\s+(?:while|whereas|but)\b", match.groups()[-1])[0].strip(" .;:")
+        if 3 <= len(subject) <= 70 and 5 <= len(answer) <= 220:
+            question, answer = build(subject, match.group(2), answer)
+            return {"question": question[0].upper() + question[1:], "answer": answer}
+    return None
+
+
+def is_valid_qa(qa):
+    question = str(qa.get("question") or "").strip()
+    answer = str(qa.get("answer") or "").strip()
+    if not question or len(answer) < 3 or len(answer) > 180:
+        return False
+    if len(answer.split()) > 30:
+        return False
+    first = answer.split()[0].lower().strip(".,;:")
+    if first in WEAK_ANSWER_STARTS and len(answer.split()) <= 5:
+        return False
+    if answer.lower().strip(" .;:") == question.lower().strip(" .;:"):
+        return False
+    return True
+
+
+def answer_signature(text):
+    return frozenset(word_tokens(text))
+
+
+def answers_similar(first, second):
+    left = answer_signature(first)
+    right = answer_signature(second)
+    if not left or not right:
+        return False
+    return len(left & right) / len(left | right) >= 0.72
+
+
 def generate_questions(text, limit=10, topics=None):
     points = extract_key_points(text, limit=max(limit * 2, 20))
     topics = topics if topics is not None else topic_words(points)
-    questions = []
-    seen = set()
+    candidates = []
+    seen_questions = set()
+    seen_answers = []
 
     for index, point in enumerate(points):
         qa = None
         if point.rstrip().endswith("?") and index + 1 < len(points):
             next_point = points[index + 1]
-            if not next_point.rstrip().endswith("?"):
+            if not next_point.rstrip().endswith("?") and len(next_point.strip()) >= 5:
                 qa = {"question": point.strip(), "answer": next_point.strip()}
+
+        qa = qa or make_relation_question(point)
         qa = qa or make_definition_question(point)
+        qa = qa or make_complexity_question(point)
         qa = qa or make_list_question(point)
         qa = qa or make_cloze_question(point, topics)
-        if not qa:
+
+        if not qa or not is_valid_qa(qa):
             continue
 
-        key = re.sub(r"[^a-z0-9]+", " ", qa["question"].lower()).strip()
-        if key in seen:
+        question_key = re.sub(r"[^a-z0-9]+", " ", qa["question"].lower()).strip()
+        if question_key in seen_questions:
             continue
-        seen.add(key)
-        qa["topics"] = [
-            word for word in re.findall(r"[a-z]{4,}", qa["question"].lower()) if word in topics
-        ][:MAX_GRAPH_NEIGHBORS]
-        questions.append(qa)
-        if len(questions) >= limit:
-            break
+        if any(answers_similar(qa["answer"], old) for old in seen_answers):
+            continue
 
-    return questions
+        seen_questions.add(question_key)
+        seen_answers.append(qa["answer"])
+        qa["topics"] = sorted(
+            line_topic_terms(f"{qa['question']} {qa['answer']}", topics)
+        )[:MAX_GRAPH_NEIGHBORS]
+        candidates.append(qa)
+
+    if len(candidates) <= limit:
+        return candidates
+
+    def primary_topic(qa):
+        return qa["topics"][0] if qa["topics"] else ""
+
+    counts = Counter(primary_topic(qa) for qa in candidates)
+    ranked = selection_sort(
+        list(enumerate(candidates)),
+        key=lambda item: (counts[primary_topic(item[1])], item[0]),
+    )
+    return [qa for _, qa in ranked[:limit]]
 
 
 # Verifies what file type is uploaded
