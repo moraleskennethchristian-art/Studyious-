@@ -38,7 +38,50 @@ LIGATURES = str.maketrans({
 WEAK_ANSWER_STARTS = {
     "it", "this", "that", "these", "those", "they", "them", "there", "here",
     "which", "who", "what", "also", "above", "below", "following", "same",
+    "not", "never", "both", "each", "all", "some", "many",
 }
+
+
+BOILERPLATE_LINE_PATTERNS = (
+    re.compile(r"^CSP06\b", re.IGNORECASE),
+    re.compile(r"^CHAPTER\s+\d+\b", re.IGNORECASE),
+    re.compile(r"^(?:FINAL PERIOD|LEARNING OUTCOMES|DISCUSSION BASIS|COURSE APPROACH)\b", re.IGNORECASE),
+    re.compile(r"^(?:REVIEW QUESTIONS|TRUSTED REFERENCES)\b", re.IGNORECASE),
+    re.compile(r"^BASIS\s*:", re.IGNORECASE),
+    re.compile(r"^(?:KEY LESSON|REMEMBER|RULE|EXAMPLE|SCENARIO|CLASSROOM EXAMPLE|FOR THIS COURSE)\s*:?", re.IGNORECASE),
+    re.compile(r"^(?:PREPARED FOR|PRIMARY/OFFICIAL|CONCEPTS ALIGN|INTRODUCTORY|EXAMPLES ARE|“LIKELY FIT”)", re.IGNORECASE),
+)
+
+QUESTION_STARTS = ("what", "why", "how", "which", "when", "where", "who", "whom")
+IMPERATIVE_STARTS = (
+    "use", "avoid", "give", "choose", "start", "stop", "connect", "run",
+    "check", "inspect", "plug", "select", "keep", "identify", "compare",
+    "distinguish", "explain", "differentiate", "do not", "don't",
+)
+BAD_FACT_WORDS = (
+    "example", "scenario", "recap", "clues", "classification", "sequence",
+    "coverage", "worksheet", "review", "reference", "basis", "footer",
+    "slide", "chapter", "csp06", "universidad", "dagupan", "best when",
+    "possible causes", "checks to perform", "initialize the device",
+    "most important connection",
+)
+
+RELATION_VERBS = {
+    "provides": "provide", "offers": "offer", "gives": "give",
+    "uses": "use", "requires": "require", "contains": "contain",
+    "supports": "support", "causes": "cause", "produces": "produce",
+    "leads to": "lead to", "results in": "result in", "follows": "follow",
+    "separates": "separate", "identifies": "identify", "controls": "control",
+    "manages": "manage", "evaluates": "evaluate", "represents": "represent",
+    "connects": "connect", "creates": "create", "reduces": "reduce",
+    "exchanges": "exchange", "communicates": "communicate", "proves": "prove",
+    "decides": "decide", "depends on": "depend on", "allows": "allow",
+    "lets": "let", "enables": "enable", "protects": "protect",
+    "prevents": "prevent", "can change": "change", "changes": "change",
+}
+RELATION_VERB_PATTERN = "|".join(
+    re.escape(verb) for verb in sorted(RELATION_VERBS, key=len, reverse=True)
+)
 
 
 def normalize_extracted_text(text):
@@ -46,18 +89,36 @@ def normalize_extracted_text(text):
     text = text.replace("\u00ad", "").translate(LIGATURES)
     text = text.replace("：", ":").replace("–", "-").replace("—", "-")
     text = re.sub(r"([A-Za-z])-\s*\n\s*([A-Za-z])", r"\1\2", text)
+    text = re.sub(r"[→←↓↑]", " ", text)
     return "\n".join(" ".join(line.split()) for line in text.splitlines())
 
 
-def remove_repeated_lines(text, minimum=3, max_length=80):
-    """Drop headers/footers repeated on several pages."""
-    lines = [line.strip() for line in text.splitlines()]
-    counts = Counter(line for line in lines if line)
-    repeated = {
-        line for line, count in counts.items()
-        if count >= minimum and len(line) <= max_length
-    }
-    return "\n".join(line for line in lines if line and line not in repeated)
+def _footer_key(line):
+    """Ignore a trailing page number so repeated footers can be detected."""
+    return re.sub(r"\s+\d{1,3}$", "", line.strip()).lower()
+
+
+def remove_repeated_lines(text, minimum=3, max_length=100):
+    """Drop repeated headers/footers and standalone page labels."""
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    counts = Counter(lines)
+    footer_counts = Counter(_footer_key(line) for line in lines)
+    kept = []
+
+    for line in lines:
+        if len(line) > max_length:
+            kept.append(line)
+            continue
+        if counts[line] >= minimum:
+            continue
+        if (
+            footer_counts[_footer_key(line)] >= 2
+            and not re.search(r"[.!?]$", line)
+        ):
+            continue
+        kept.append(line)
+
+    return "\n".join(kept)
 
 
 def load_local_env():
@@ -449,7 +510,7 @@ def read_docx(stream):
                 cells = [" ".join(cell.text.split()) for cell in row.cells]
                 if any(cells):
                     lines.append(" | ".join(cells))
-        return normalize_extracted_text("\n".join(lines))
+        return remove_repeated_lines(normalize_extracted_text("\n".join(lines)))
 
     for child in document.element.body.iterchildren():
         if child.tag.endswith("}p"):
@@ -464,7 +525,7 @@ def read_docx(stream):
                 if cells:
                     lines.append(" | ".join(cells))
 
-    return normalize_extracted_text("\n".join(lines))
+    return remove_repeated_lines(normalize_extracted_text("\n".join(lines)))
 
 
 def read_pdf(stream):
@@ -503,8 +564,85 @@ NOISE_PATTERNS = (
     r"https?://", r"www\.", r"\S+@\S+", r"^\d+(?:\.\d+)?$", r"^[ivxlcdm]+\.$",
     r"^chapter\s+\d+", r"^figure\s+\d+", r"^section\s+\d+", r"^\s*[-=_*]{3,}\s*$",
 )
+EXTRA_TOPIC_STOP_WORDS = {
+    "able", "account", "answer", "approach", "basis", "chapter", "classroom",
+    "course", "csp", "dagupan", "detail", "example", "examples", "explain",
+    "final", "first", "identify", "lesson", "main", "note", "overall", "period",
+    "question", "questions", "recap", "reference", "references", "remember",
+    "review", "rule", "scenario", "second", "short", "signal", "slide",
+    "student", "students", "summary", "third", "topic", "topics", "universidad",
+}
+
 LIST_MARKER = re.compile(r"^(?:[-•*–—]|\d+[.)]|[a-z][.)])\s+")
 SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+(?=[A-Z0-9])")
+DEFINITION_VERB_PATTERN = re.compile(
+    r"\b(is|are|was|were|means|refers to|defined as|consists of|includes|involves)\b",
+    re.IGNORECASE,
+)
+QUIZ_FACT_PATTERN = re.compile(
+    r"\b(is|are|was|were|means|refers to|defined as|consists of|includes|involves|"
+    r"provides|offers|gives|uses|requires|contains|supports|causes|produces|"
+    r"leads to|results in|follows|separates|identifies|controls|manages|"
+    r"evaluates|represents|connects|creates|reduces|exchanges|communicates|"
+    r"proves|decides|depends on|allows|lets|enables|protects|prevents|can|"
+    r"changes|there are|there were)\b",
+    re.IGNORECASE,
+)
+
+
+def strip_leading_markers(line):
+    """Remove repeated bullet/number markers such as '- 1. '."""
+    previous = None
+    while previous != line:
+        previous = line
+        line = LIST_MARKER.sub("", line).strip()
+    return line
+
+
+def is_boilerplate(line):
+    return any(pattern.match(line.strip()) for pattern in BOILERPLATE_LINE_PATTERNS)
+
+
+def is_noise(line):
+    line = line.strip()
+    if not line or is_boilerplate(line):
+        return True
+    if len(line) < 20 or len(line) > 260:
+        return True
+    if re.search(r"[•▪◦∙|→]", line) or line.count(";") >= 2:
+        return True
+    words = re.findall(r"[A-Za-z]+", line)
+    if len(words) < 5 or line.isupper():
+        return True
+    if len(re.findall(r"\b\d+[.)]\b", line)) >= 2:
+        return True
+    lower = line.lower()
+    if any(re.search(pattern, lower) for pattern in NOISE_PATTERNS):
+        return True
+    if re.search(r"\b(?:chapter|csp06|universidad|dagupan|final period)\b", lower):
+        return True
+    return False
+
+
+def is_quiz_fact(line):
+    if is_noise(line) or "?" in line:
+        return False
+    if not line.rstrip().endswith(".") or not line[0].isupper():
+        return False
+    if len(line.split()) < 6 or line.count(":") > 1:
+        return False
+    if re.search(r"[✓✔✗□■]", line):
+        return False
+    lower = line.lower()
+    if lower.startswith(QUESTION_STARTS + IMPERATIVE_STARTS):
+        return False
+    if "do not" in lower or "don't" in lower or lower.startswith("not "):
+        return False
+    if any(word in lower for word in BAD_FACT_WORDS):
+        return False
+    if re.search(r"\bch\s*\d+\b", lower):
+        return False
+    return bool(QUIZ_FACT_PATTERN.search(lower))
 
 
 def split_sentences(line):
@@ -512,14 +650,18 @@ def split_sentences(line):
 
 
 def split_into_candidates(text):
-    
     candidates = []
     buffer = ""
+
+    def add(line):
+        line = strip_leading_markers(line.strip())
+        if line and not is_noise(line):
+            candidates.append(line)
 
     def flush():
         nonlocal buffer
         if buffer:
-            candidates.append(buffer.strip())
+            add(buffer)
             buffer = ""
 
     for raw_line in text.splitlines():
@@ -527,15 +669,17 @@ def split_into_candidates(text):
         if not line:
             flush()
             continue
-        if LIST_MARKER.match(line) or " | " in line or line.endswith(":"):
+
+        line = strip_leading_markers(line)
+        if is_noise(line):
             flush()
-            candidates.append(line)
             continue
 
         sentences = split_sentences(line)
         if len(sentences) > 1:
             flush()
-            candidates.extend(sentences)
+            for sentence in sentences:
+                add(sentence)
             continue
 
         if buffer and len(buffer) > 40 and not re.search(r"[.!?;:]$", buffer):
@@ -543,6 +687,7 @@ def split_into_candidates(text):
         else:
             flush()
             buffer = line
+
     flush()
     return candidates
 
@@ -564,7 +709,6 @@ def is_noise(line):
 
 
 def stem_word(word):
-    """Small local stemmer: groups simple plurals and inflections."""
     if len(word) <= 4:
         return word
     if word.endswith("ies"):
@@ -599,7 +743,12 @@ def topic_words(candidates):
     counts = Counter()
     pair_counts = Counter()
     for line in candidates:
-        tokens = word_tokens(line)
+        if not is_quiz_fact(line):
+            continue
+        tokens = [
+            token for token in word_tokens(line)
+            if token not in EXTRA_TOPIC_STOP_WORDS
+        ]
         counts.update(set(tokens))
         pair_counts.update({f"{a} {b}" for a, b in zip(tokens, tokens[1:])})
 
@@ -663,6 +812,10 @@ def score_line(line, topics):
         score -= 3
     if lower.startswith(("and ", "but ", "or ", "also ", "however ", "for example ")):
         score -= 2
+    if "?" in line or lower.startswith(QUESTION_STARTS):
+        score -= 4
+    if not is_quiz_fact(line):
+        score -= 6
     return score
 
 
@@ -700,8 +853,8 @@ def extract_key_points(text, limit=MAX_KEY_POINTS):
     scored = []
 
     for index, line in enumerate(candidates):
-        line = line.strip(" •–—-*")
-        if is_noise(line):
+        line = strip_leading_markers(line.strip())
+        if not is_quiz_fact(line):
             continue
         key = re.sub(r"[^a-z0-9]+", " ", line.lower()).strip()
         if key in seen:
@@ -710,7 +863,7 @@ def extract_key_points(text, limit=MAX_KEY_POINTS):
         scored.append((score_line(line, topics), index, line))
 
     if not scored:
-        return [line for line in candidates if len(line) >= 15][:limit]
+        return [line for line in candidates if is_quiz_fact(line)][:limit]
 
     
     sections = min(4, max(1, limit))
@@ -736,25 +889,46 @@ def extract_key_points(text, limit=MAX_KEY_POINTS):
 
 
 # File Upload Question Generator
+def clean_answer(value):
+    answer = " ".join(str(value or "").split()).strip(" .;:")
+    answer = re.split(r"\s+(?:Basis|Reference|Example|Rule)\s*:", answer, flags=re.IGNORECASE)[0]
+    answer = re.split(r",\s+(?:so|because|while|whereas|but)\b", answer, flags=re.IGNORECASE)[0]
+    return re.sub(r"\s+\d{1,3}$", "", answer).strip(" .;:")
+
+
+def lower_starts(value, starts):
+    return value.lower().startswith(tuple(starts))
+
+
 def clean_subject(value):
-    return re.sub(r"^(the|a|an)\s+", "", value.strip(" .,:;"), flags=re.IGNORECASE)
+    subject = re.sub(r"^[\d•.\s]+", "", str(value or "").strip(" .,:;"))
+    subject = re.sub(r"^(?:the|a|an)\s+", "", subject, flags=re.IGNORECASE)
+    subject = subject.strip(" .,:;")
+    if lower_starts(subject, QUESTION_STARTS + ("this", "that", "these", "those", "it", "they", "there", "here")):
+        return ""
+    if subject.lower() in WEAK_ANSWER_STARTS or ";" in subject:
+        return ""
+    return subject
 
 
 def make_definition_question(point):
-    if re.match(r"^(?:there|here)\s+(?:is|are|was|were)\b", point, re.IGNORECASE):
-        return None 
-    match = re.match(
-        r"^(.{3,70}?)\s+(is|are|was|were|means|refers to|defined as|consists of|includes|involves)\s+(.+)$",
-        point,
-        re.IGNORECASE,
-    )
-    if not match:
+    if "?" in point or not is_quiz_fact(point):
         return None
-
-    subject = clean_subject(match.group(1))
-    verb = match.group(2).lower()
-    answer = match.group(3).strip(" .;")
-    if len(subject) < 3 or not 5 <= len(answer) <= 220:
+    if re.match(r"^(?:there|here)\s+(?:is|are|was|were)\b", point, re.IGNORECASE):
+        return None
+    match = DEFINITION_VERB_PATTERN.search(point)
+    if not match or match.start() < 3:
+        return None
+    subject = clean_subject(point[:match.start()])
+    verb = match.group(1).lower()
+    answer = clean_answer(point[match.end():])
+    if len(subject) < 3 or len(subject) > 70 or ";" in subject:
+        return None
+    if subject.lower() in WEAK_ANSWER_STARTS or subject.lower().endswith(
+        ("that", "which", "who", "where", "when")
+    ):
+        return None
+    if not 5 <= len(answer) <= 220 or "?" in answer:
         return None
 
     templates = {
@@ -791,16 +965,21 @@ def make_list_question(point):
 
 
 def make_cloze_question(point, topics):
-    words = re.findall(r"(?<![A-Za-z-])[A-Za-z]{4,}(?![A-Za-z-])", point)
-    candidates = [word for word in words if word.lower() not in STOP_WORDS and len(word) <= 30]
-    if not candidates:
+    if not is_quiz_fact(point) or "?" in point or len(point) > 200:
         return None
-
+    first_word = point.split()[0].lower().strip(" .,:;")
+    if first_word in WEAK_ANSWER_STARTS or first_word in IMPERATIVE_STARTS:
+        return None
+    words = re.findall(r"(?<![A-Za-z-])[A-Za-z]{6,}(?![A-Za-z-])", point)
     preferred = [
-        word for word in candidates
-        if stem_word(word.lower()) in topics and len(word) >= 6
+        word for word in words
+        if stem_word(word.lower()) in topics
+        and word.lower() not in EXTRA_TOPIC_STOP_WORDS
+        and not word.lower().endswith("ing")
     ]
-    pick = sorted(preferred or candidates, key=len, reverse=True)[0]
+    if not preferred:
+        return None
+    pick = sorted(preferred, key=lambda word: (-len(word), words.index(word)))[0]
     cloze = re.sub(r"\b" + re.escape(pick) + r"\b", "_____", point, count=1, flags=re.IGNORECASE)
     if cloze == point:
         return None
@@ -823,38 +1002,49 @@ def make_complexity_question(point):
 
 
 def make_relation_question(point):
+    if "?" in point or not is_quiz_fact(point):
+        return None
+
     important = re.match(r"^(.{3,70}?)\s+is\s+important\s+because\s+(.+)$", point, re.IGNORECASE)
     if important:
         subject = clean_subject(important.group(1))
-        answer = important.group(2).strip(" .;:")
+        answer = clean_answer(important.group(2))
         if 3 <= len(subject) <= 70 and 5 <= len(answer) <= 220:
             question = f"Why is {subject} important?"
             return {"question": question[0].upper() + question[1:], "answer": answer}
 
-    verbs = {
-        "causes": "cause", "produces": "produce", "leads to": "lead to",
-        "results in": "result in", "follows": "follow", "uses": "use",
-        "requires": "require", "contains": "contain", "supports": "support",
-    }
-    patterns = (
-        (
-            r"^(.{3,70}?)\s+(?:is|are)\s+used\s+to\s+(.+)$",
-            lambda subject, _verb, answer: (f"What is {subject} used for?", f"To {answer}"),
-        ),
-        (
-            r"^(.{3,70}?)\s+(causes|produces|leads to|results in|follows|uses|requires|contains|supports)\s+(.+)$",
-            lambda subject, verb, answer: (f"What does {subject} {verbs[verb.lower()]}?", answer),
-        ),
-    )
+    used_to = re.match(r"^(.{3,80}?)\s+(?:is|are)\s+used\s+to\s+(.+)$", point, re.IGNORECASE)
+    if used_to:
+        subject = clean_subject(used_to.group(1))
+        answer = clean_answer(used_to.group(2))
+        if 3 <= len(subject) <= 80 and 5 <= len(answer) <= 220:
+            question = f"What is {subject} used for?"
+            return {"question": question[0].upper() + question[1:], "answer": f"To {answer}"}
 
-    for pattern, build in patterns:
-        match = re.match(pattern, point, re.IGNORECASE)
-        if not match:
-            continue
+    evaluated = re.match(r"^(.{3,80}?)\s+are\s+evaluated\s+using\s+(.+)$", point, re.IGNORECASE)
+    if evaluated:
+        subject = clean_subject(evaluated.group(1))
+        answer = clean_answer(evaluated.group(2))
+        if 3 <= len(subject) <= 80 and 5 <= len(answer) <= 220:
+            question = f"What are {subject} evaluated using?"
+            return {"question": question[0].upper() + question[1:], "answer": answer}
+
+    match = re.match(
+        rf"^(.{{3,80}}?)\s+({RELATION_VERB_PATTERN})\s+(.+)$",
+        point,
+        re.IGNORECASE,
+    )
+    if match:
+        if DEFINITION_VERB_PATTERN.search(match.group(1)):
+            return None
         subject = clean_subject(match.group(1))
-        answer = re.split(r",\s+(?:while|whereas|but)\b", match.groups()[-1])[0].strip(" .;:")
-        if 3 <= len(subject) <= 70 and 5 <= len(answer) <= 220:
-            question, answer = build(subject, match.group(2), answer)
+        if " and " in subject.lower():
+            return None
+        answer = clean_answer(match.group(3))
+        answer = re.split(r",\s+(?:while|whereas|but)\b", answer)[0].strip(" .;:")
+        verb = RELATION_VERBS[match.group(2).lower()]
+        if 3 <= len(subject) <= 80 and 5 <= len(answer) <= 220:
+            question = f"What does {subject} {verb}?"
             return {"question": question[0].upper() + question[1:], "answer": answer}
     return None
 
@@ -862,11 +1052,17 @@ def make_relation_question(point):
 def is_valid_qa(qa):
     question = str(qa.get("question") or "").strip()
     answer = str(qa.get("answer") or "").strip()
-    if not question or len(answer) < 3 or len(answer) > 180:
+    if not question or not 3 <= len(answer) <= 180:
         return False
-    if len(answer.split()) > 30:
+    if len(answer.split()) > 30 or question.count("?") > 1 or "?" in answer:
+        return False
+    if re.search(r"\b(?:CSP06|CHAPTER\s+\d+|UNIVERSIDAD|DAGUPAN)\b", f"{question} {answer}", re.IGNORECASE):
+        return False
+    if re.match(r"^(?:what|why|how|which|when|where|who)\s+\d", question, re.IGNORECASE):
         return False
     first = answer.split()[0].lower().strip(".,;:")
+    if first in {"not", "no", "never"}:
+        return False
     if first in WEAK_ANSWER_STARTS and len(answer.split()) <= 5:
         return False
     if answer.lower().strip(" .;:") == question.lower().strip(" .;:"):
@@ -887,21 +1083,15 @@ def answers_similar(first, second):
 
 
 def generate_questions(text, limit=10, topics=None):
-    points = extract_key_points(text, limit=max(limit * 2, 20))
+    points = extract_key_points(text, limit=max(limit * 3, 30))
     topics = topics if topics is not None else topic_words(points)
     candidates = []
     seen_questions = set()
     seen_answers = []
 
-    for index, point in enumerate(points):
-        qa = None
-        if point.rstrip().endswith("?") and index + 1 < len(points):
-            next_point = points[index + 1]
-            if not next_point.rstrip().endswith("?") and len(next_point.strip()) >= 5:
-                qa = {"question": point.strip(), "answer": next_point.strip()}
-
+    for point in points:
+        qa = make_definition_question(point)
         qa = qa or make_relation_question(point)
-        qa = qa or make_definition_question(point)
         qa = qa or make_complexity_question(point)
         qa = qa or make_list_question(point)
         qa = qa or make_cloze_question(point, topics)
@@ -928,10 +1118,13 @@ def generate_questions(text, limit=10, topics=None):
     def primary_topic(qa):
         return qa["topics"][0] if qa["topics"] else ""
 
-    counts = Counter(primary_topic(qa) for qa in candidates)
+    counts = Counter(primary_topic(qa) for qa in candidates if primary_topic(qa))
     ranked = selection_sort(
         list(enumerate(candidates)),
-        key=lambda item: (counts[primary_topic(item[1])], item[0]),
+        key=lambda item: (
+            counts.get(primary_topic(item[1]), 10 ** 6) if primary_topic(item[1]) else 10 ** 6,
+            item[0],
+        ),
     )
     return [qa for _, qa in ranked[:limit]]
 
