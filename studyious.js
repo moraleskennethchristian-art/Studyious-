@@ -67,6 +67,25 @@ async function api(path, options = {}) {
     return result;
 }
 
+function formatTimestamp(value) {
+    if (!value) return "";
+    const raw = String(value).trim();
+    const source = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/.test(raw)
+        ? raw + "Z"
+        : raw;
+    const date = new Date(source);
+    if (Number.isNaN(date.getTime())) return raw;
+    return new Intl.DateTimeFormat("en-PH", {
+        timeZone: "Asia/Manila",
+        year: "numeric",
+        month: "short",
+        day: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: true,
+    }).format(date);
+}
+
 function setStatus(element, message, isError = false) {
     element.textContent = message;
     element.className = (element.id === "uploadStatus" ? "upload-status" : "finalize-status") +
@@ -366,7 +385,7 @@ async function loadFiles() {
             const info = makeElement("div");
             info.appendChild(makeElement("h3", "", file.filename));
             info.appendChild(makeElement("p", "",
-                `${file.question_count} question(s) - uploaded ${file.uploaded_at}`));
+                `${file.question_count} question(s) - uploaded ${formatTimestamp(file.uploaded_at)}`));
 
             const actions = makeElement("div", "item-actions");
             const loadButton = makeElement("button", "small-btn", "Load questions");
@@ -455,7 +474,7 @@ async function loadQuizzes() {
             const info = makeElement("div");
             info.appendChild(makeElement("h3", "", quiz.title));
             info.appendChild(makeElement("p", "",
-                `${quiz.question_count} question(s) - created ${quiz.created_at}`));
+                `${quiz.question_count} question(s) - created ${formatTimestamp(quiz.created_at)}`));
 
             const actions = makeElement("div", "item-actions");
             const startButton = makeElement("button", "action-btn", "Start quiz");

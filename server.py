@@ -5,7 +5,7 @@ import os
 import re
 from collections import Counter
 from contextlib import contextmanager
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from functools import wraps
 from itertools import combinations
 from pathlib import Path
@@ -212,7 +212,7 @@ def public_doc(document):
 
 
 def now_string():
-    return datetime.now().isoformat(timespec="seconds")
+    return datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
 
 # Profile avatar setup when users want to customize their profile
 def decode_avatar(data_url):
@@ -329,7 +329,6 @@ def app_page():
 
 @app.route("/avatars/<filename>")
 def avatar_file(filename):
-    """Serve a profile picture from MongoDB (no local disk needed)."""
     if Path(filename).name != filename:
         return "Not found", 404
     try:
@@ -350,7 +349,6 @@ def avatar_file(filename):
 
 @app.route("/<path:filename>")
 def static_files(filename):
-    """Serve the existing CSS/JS files next to this script."""
     return send_from_directory(BASE_DIR, filename)
 
 
