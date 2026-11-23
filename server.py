@@ -15,11 +15,18 @@ from bson import Binary, ObjectId
 from flask import Flask, Response, jsonify, request, send_from_directory, session
 from werkzeug.exceptions import HTTPException
 
-# python-docx reads Word (.docx) files; pypdf reads PDF files.
+
 try:
     from docx import Document
 except ImportError:  
     Document = None
+try:
+    import fitz 
+except ImportError:
+    try:
+        import pymupdf as fitz  
+    except ImportError:
+        fitz = None
 try:
     from pypdf import PdfReader
 except ImportError:  
@@ -85,7 +92,6 @@ RELATION_VERB_PATTERN = "|".join(
 
 
 def normalize_extracted_text(text):
-    """Repair common PDF/DOCX extraction artefacts before candidate selection."""
     text = text.replace("\u00ad", "").translate(LIGATURES)
     text = text.replace("：", ":").replace("–", "-").replace("—", "-")
     text = re.sub(r"([A-Za-z])-\s*\n\s*([A-Za-z])", r"\1\2", text)
@@ -94,12 +100,10 @@ def normalize_extracted_text(text):
 
 
 def _footer_key(line):
-    """Ignore a trailing page number so repeated footers can be detected."""
     return re.sub(r"\s+\d{1,3}$", "", line.strip()).lower()
 
 
 def remove_repeated_lines(text, minimum=3, max_length=100):
-    """Drop repeated headers/footers and standalone page labels."""
     lines = [line.strip() for line in text.splitlines() if line.strip()]
     counts = Counter(lines)
     footer_counts = Counter(_footer_key(line) for line in lines)
@@ -432,7 +436,7 @@ def me():
         avatar=avatar,
     )
 
-# Profile avatar save function: image bytes are kept in MongoDB.
+# Profile avatar save function
 @app.route("/api/avatar", methods=["POST"])
 @require_login
 def save_avatar():
@@ -494,7 +498,6 @@ def allowed_file(filename, content_type):
 
 
 def read_docx(stream):
-    """Read paragraphs, headings, and tables in document order."""
     if Document is None:
         raise RuntimeError("python-docx is not installed. Run: pip install python-docx")
     document = Document(stream)
@@ -528,18 +531,92 @@ def read_docx(stream):
     return remove_repeated_lines(normalize_extracted_text("\n".join(lines)))
 
 
-def read_pdf(stream):
-    if PdfReader is None:
-        raise RuntimeError("pypdf is not installed. Run: pip install pypdf")
-    reader = PdfReader(stream)
+def extract_pdf_with_fitz(data):
+    if fitz is None:
+        raise RuntimeError("PyMuPDF is not installed. Run: pip install PyMuPDF")
+
+    document = fitz.open(stream=data, filetype="pdf")
     pages = []
-    for page in reader.pages:
+    try:
+        for page in document:
+            page_height = page.rect.height
+            ordered_blocks = []
+
+            for block in page.get_text("dict")["blocks"]:
+                if block.get("type") != 0:
+                    continue
+
+                block_lines = []
+                for line in block.get("lines", []):
+                    text = "".join(span.get("text", "") for span in line.get("spans", []))
+                    text = " ".join(text.split())
+                    if not text:
+                        continue
+
+                    x0, y0, _, _ = line.get("bbox", (0, 0, 0, 0))
+                    font_size = max(
+                        (span.get("size", 0) for span in line.get("spans", [])),
+                        default=0,
+                    )
+                    if y0 >= page_height * 0.90 and font_size < 11:
+                        continue
+                    block_lines.append((y0, x0, text))
+
+                if not block_lines:
+                    continue
+
+                block_lines.sort(key=lambda item: (item[0], item[1]))
+                block_y = min(line[0] for line in block_lines)
+                block_x = min(line[1] for line in block_lines)
+                order = block.get("number", 0)
+                if block_y >= page_height * 0.90:
+                    order = 10 ** 6 + block_y
+
+                ordered_blocks.append((
+                    order,
+                    block_y,
+                    block_x,
+                    "\n".join(line[2] for line in block_lines),
+                ))
+
+            ordered_blocks.sort(key=lambda item: (item[0], item[1], item[2]))
+            pages.append("\n".join(block[3] for block in ordered_blocks))
+    finally:
+        document.close()
+
+    return "\n".join(pages)
+
+
+def read_pdf(stream):
+    data = stream.read()
+    text = ""
+
+    if fitz is not None:
         try:
-            pages.append(page.extract_text(extraction_mode="layout") or "")
-        except TypeError:
-            pages.append(page.extract_text() or "")
-    text = normalize_extracted_text("\n".join(pages))
-    return remove_repeated_lines(text)
+            text = extract_pdf_with_fitz(data)
+        except Exception:
+            text = ""
+
+    if len(text.strip()) < 20 and PdfReader is not None:
+        try:
+            reader = PdfReader(io.BytesIO(data))
+            pages = []
+            for page in reader.pages:
+                try:
+                    pages.append(page.extract_text(extraction_mode="layout") or "")
+                except TypeError:
+                    pages.append(page.extract_text() or "")
+            text = "\n".join(pages)
+        except Exception:
+            pass
+
+    normalized = normalize_extracted_text(text)
+    if len(normalized.strip()) < 20:
+        raise RuntimeError(
+            "No readable text was found in this PDF. Scanned or image-only "
+            "PDFs need OCR before questions can be generated."
+        )
+    return remove_repeated_lines(normalized)
 
 
 # Key-points remind when user does file upload for setting up quiz
@@ -591,7 +668,6 @@ QUIZ_FACT_PATTERN = re.compile(
 
 
 def strip_leading_markers(line):
-    """Remove repeated bullet/number markers such as '- 1. '."""
     previous = None
     while previous != line:
         previous = line
@@ -967,6 +1043,8 @@ def make_list_question(point):
 def make_cloze_question(point, topics):
     if not is_quiz_fact(point) or "?" in point or len(point) > 200:
         return None
+    if re.search(r"\b(?:but|may|might|could|would|should)\b", point, re.IGNORECASE):
+        return None
     first_word = point.split()[0].lower().strip(" .,:;")
     if first_word in WEAK_ANSWER_STARTS or first_word in IMPERATIVE_STARTS:
         return None
@@ -1038,7 +1116,9 @@ def make_relation_question(point):
         if DEFINITION_VERB_PATTERN.search(match.group(1)):
             return None
         subject = clean_subject(match.group(1))
-        if " and " in subject.lower():
+        if " and " in subject.lower() or " but " in subject.lower():
+            return None
+        if re.search(r"\b(?:may|might|could|would|should|solve|help)\b", subject, re.IGNORECASE):
             return None
         answer = clean_answer(match.group(3))
         answer = re.split(r",\s+(?:while|whereas|but)\b", answer)[0].strip(" .;:")
