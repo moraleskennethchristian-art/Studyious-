@@ -109,7 +109,7 @@ if (mobileMenuBtn) {
 
 if (sidebarOverlay) sidebarOverlay.addEventListener("click", () => setSidebarOpen(false));
 
-// On phones the sidebar is a drawer, so tapping the page closes it.
+// On phones the sidebar is a drawer, so tapping the page closes it
 document.querySelector(".dashboard").addEventListener("click", () => {
     if (window.innerWidth <= 700 && !sidebar.classList.contains("close")) {
         setSidebarOpen(false);
@@ -319,9 +319,9 @@ function showConfirmDialog({ title, message, confirmLabel = "Delete", onConfirm 
     confirmDeleteBtn.focus();
 }
 
-function showConfirmError(message) {
+function showConfirmError(message, title = "Couldn't delete file") {
     confirmIcon.className = "bxf bx-x-circle";
-    confirmTitle.textContent = "Couldn't delete file";
+    confirmTitle.textContent = title;
     confirmMessage.textContent = message;
     confirmDeleteBtn.textContent = "OK";
     confirmCancelBtn.hidden = true;
@@ -431,7 +431,7 @@ async function loadFileQuestions(fileId) {
             : base);
         showView("home");
     } catch (error) {
-        alert(error.message);
+        showConfirmError(error.message, "Couldn't load file");
     }
 }
 
@@ -461,14 +461,20 @@ async function loadQuizzes() {
             const startButton = makeElement("button", "action-btn", "Start quiz");
             startButton.addEventListener("click", () => startQuiz(quiz.id));
             const deleteButton = makeElement("button", "small-btn", "Delete");
-            deleteButton.addEventListener("click", async () => {
-                if (!confirm(`Delete quiz "${quiz.title}"?`)) return;
-                try {
-                    await api(`/api/quizzes/${quiz.id}`, { method: "DELETE" });
-                    loadQuizzes();
-                } catch (error) {
-                    alert(error.message);
-                }
+            deleteButton.addEventListener("click", () => {
+                showConfirmDialog({
+                    title: "Delete quiz?",
+                    message: `Delete quiz "${quiz.title}"? This cannot be undone.`,
+                    confirmLabel: "Delete quiz",
+                    onConfirm: async () => {
+                        try {
+                            await api(`/api/quizzes/${quiz.id}`, { method: "DELETE" });
+                            loadQuizzes();
+                        } catch (error) {
+                            showConfirmError(error.message, "Couldn't delete quiz");
+                        }
+                    }
+                });
             });
             actions.append(startButton, deleteButton);
             card.append(info, actions);
@@ -622,7 +628,7 @@ async function startQuiz(quizId) {
         quizSession.hidden = false;
         renderQuizQuestion();
     } catch (error) {
-        alert(error.message);
+        showConfirmError(error.message, "Couldn't start quiz");
     }
 }
 
