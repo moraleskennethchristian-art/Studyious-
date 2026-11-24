@@ -50,7 +50,7 @@ WEAK_ANSWER_STARTS = {
 
 
 BOILERPLATE_LINE_PATTERNS = (
-    re.compile(r"^CSP06\b", re.IGNORECASE),
+    re.compile(r"^[A-Z]{2,}\d{2,}\b"),  # course/class-code footers
     re.compile(r"^CHAPTER\s+\d+\b", re.IGNORECASE),
     re.compile(r"^(?:FINAL PERIOD|LEARNING OUTCOMES|DISCUSSION BASIS|COURSE APPROACH)\b", re.IGNORECASE),
     re.compile(r"^(?:REVIEW QUESTIONS|TRUSTED REFERENCES)\b", re.IGNORECASE),
@@ -68,7 +68,7 @@ IMPERATIVE_STARTS = (
 BAD_FACT_WORDS = (
     "example", "scenario", "recap", "clues", "classification", "sequence",
     "coverage", "worksheet", "review", "reference", "basis", "footer",
-    "slide", "chapter", "csp06", "universidad", "dagupan", "best when",
+    "slide", "chapter", "best when",
     "possible causes", "checks to perform", "initialize the device",
     "most important connection",
 )
@@ -641,11 +641,11 @@ NOISE_PATTERNS = (
 )
 EXTRA_TOPIC_STOP_WORDS = {
     "able", "account", "answer", "approach", "basis", "chapter", "classroom",
-    "course", "csp", "dagupan", "detail", "example", "examples", "explain",
+    "course", "detail", "example", "examples", "explain",
     "final", "first", "identify", "lesson", "main", "note", "overall", "period",
     "question", "questions", "recap", "reference", "references", "remember",
     "review", "rule", "scenario", "second", "short", "signal", "slide",
-    "student", "students", "summary", "third", "topic", "topics", "universidad",
+    "student", "students", "summary", "third", "topic", "topics",
 }
 
 LIST_MARKER = re.compile(r"^(?:[-•*–—]|\d+[.)]|[a-z][.)])\s+")
@@ -692,8 +692,6 @@ def is_noise(line):
         return True
     lower = line.lower()
     if any(re.search(pattern, lower) for pattern in NOISE_PATTERNS):
-        return True
-    if re.search(r"\b(?:chapter|csp06|universidad|dagupan|final period)\b", lower):
         return True
     return False
 
@@ -1134,7 +1132,7 @@ def is_valid_qa(qa):
         return False
     if len(answer.split()) > 30 or question.count("?") > 1 or "?" in answer:
         return False
-    if re.search(r"\b(?:CSP06|CHAPTER\s+\d+|UNIVERSIDAD|DAGUPAN)\b", f"{question} {answer}", re.IGNORECASE):
+    if re.search(r"\bCHAPTER\s+\d+\b", f"{question} {answer}", re.IGNORECASE):
         return False
     if re.match(r"^(?:what|why|how|which|when|where|who)\s+\d", question, re.IGNORECASE):
         return False
