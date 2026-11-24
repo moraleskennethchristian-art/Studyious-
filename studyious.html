@@ -102,6 +102,17 @@
 
                 <div class="panel">
                     <h2>Or upload a file</h2>
+                    <div class="upload-controls">
+                        <label class="field">
+                            <span>Questions to generate</span>
+                            <select id="questionCount">
+                                <option value="10" selected>10 questions</option>
+                                <option value="20">20 questions</option>
+                                <option value="30">30 questions</option>
+                                <option value="50">50 questions</option>
+                            </select>
+                        </label>
+                    </div>
                     <div class="file-upload">
                         <input type="file" id="file" class="uploadFile" accept=".docx,.pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/pdf">
                         <label for="file">Please drop your files here (.docx and .pdf files)</label>
@@ -144,6 +155,7 @@
                 </div>
                 <p id="quizProgress" class="quiz-progress"></p>
                 <div id="quizQuestion" class="quiz-question"></div>
+                <p id="quizSource" class="quiz-source" hidden></p>
                 <div class="answer-entry" id="answerEntry">
                     <input type="text" id="quizAnswerInput" placeholder="Type your answer here...">
                     <button type="button" id="checkAnswerBtn" class="action-btn">Check answer</button>

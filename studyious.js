@@ -5,6 +5,7 @@ const mobileMenuBtn = document.getElementById("mobileMenuBtn");
 const sidebarOverlay = document.getElementById("sidebarOverlay");
 const modeSwitch = body.querySelector(".toggle-switch");
 const uploadInput = document.querySelector(".uploadFile");
+const questionCountSelect = document.getElementById("questionCount");
 const uploadStatus = document.getElementById("uploadStatus");
 const logoutLink = document.getElementById("logoutLink");
 const profileAvatar = document.getElementById("profileAvatar");
@@ -35,6 +36,29 @@ const QUESTIONS_KEY = "studyiousQuestions";
 const THEME_KEY = "studyiousTheme";
 const CROP_SIZE = 320;
 const MAX_QUESTIONS = 50;
+const ANSWER_SYNONYMS = {
+    utilize: "use",
+    utilizes: "use",
+    utilizing: "use",
+    employ: "use",
+    employs: "use",
+    provide: "provide",
+    offer: "provide",
+    offers: "provide",
+    require: "require",
+    need: "require",
+    needs: "require",
+    begin: "start",
+    begins: "start",
+    commence: "start",
+    terminate: "stop",
+    method: "method",
+    technique: "method",
+    approach: "method",
+    mistake: "error",
+    faults: "error",
+    fault: "error",
+};
 // Dynamic Array and Queue is implemented for the question-storing
 let questionArray = JSON.parse(localStorage.getItem(QUESTIONS_KEY) || "[]");
 
@@ -178,13 +202,25 @@ function answerText(item) {
     return typeof item === "string" ? "" : (item?.answer || "");
 }
 
+function sourceText(item) {
+    const source = item?.source;
+    if (!source || typeof source !== "object") return "";
+    const parts = [];
+    if (source.section) parts.push(String(source.section).trim());
+    if (source.page) parts.push(`p. ${source.page}`);
+    return parts.filter(Boolean).join(", ");
+}
+
 function formatQuestion(item, index) {
     const question = questionText(item).trim();
     if (!question) return "";
     const answer = answerText(item).trim();
-    return answer
+    const lines = [answer
         ? `${index + 1}. Q: ${question}\n   A: ${answer}`
-        : `${index + 1}. ${question}`;
+        : `${index + 1}. ${question}`];
+    const source = sourceText(item);
+    if (source) lines.push(`   Source: ${source}`);
+    return lines.join("\n");
 }
 
 function renderQuestions() {
@@ -243,9 +279,14 @@ uploadInput.addEventListener("change", async () => {
         return;
     }
 
+    const requestedCount = Math.min(
+        MAX_QUESTIONS,
+        Number(questionCountSelect?.value) || 10
+    );
     setStatus(uploadStatus, "Reading file...");
     const formData = new FormData();
     formData.append("file", file);
+    formData.append("question_count", String(requestedCount));
 
     try {
         const result = await api("/api/upload", { method: "POST", body: formData });
@@ -257,14 +298,19 @@ uploadInput.addEventListener("change", async () => {
                 continue;
             }
             // Linear search checks the array if a question currently exists in the array
-            if (questionArray.includes(question)) continue;
+            if (questionArray.some((existing) => questionText(existing) === questionText(question))) {
+                continue;
+            }
             // Queue - enqueue [Inserts a question at the end of the questionnaire]
             questionArray.push(question);
             added += 1;
         }
         saveQuestions();
         renderQuestions();
-        const base = `Generated ${result.extracted_count} question(s) from ${result.filename}.`;
+        let base = `Generated ${result.extracted_count} of ${requestedCount} requested question(s) from ${result.filename}.`;
+        if (result.ocr_pages?.length) {
+            base += ` OCR used on page(s): ${result.ocr_pages.join(", ")}.`;
+        }
         setStatus(uploadStatus, skipped
             ? `${base} Added ${added}; question limit is ${MAX_QUESTIONS}.`
             : base);
@@ -506,6 +552,7 @@ async function loadQuizzes() {
 
 const quizSession = document.getElementById("quizSession");
 const quizQuestion = document.getElementById("quizQuestion");
+const quizSource = document.getElementById("quizSource");
 const quizProgress = document.getElementById("quizProgress");
 const answerEntry = document.getElementById("answerEntry");
 const quizAnswerInput = document.getElementById("quizAnswerInput");
@@ -659,6 +706,50 @@ function normalizeAnswer(value) {
         .trim();
 }
 
+function stemAnswerToken(token) {
+    if (token.length <= 4 || token.endsWith("ss")) return token;
+    if (token.endsWith("ies")) return token.slice(0, -3) + "y";
+    if (token.endsWith("ing") && token.length > 6) return token.slice(0, -3);
+    if (token.endsWith("ed") && token.length > 5) return token.slice(0, -2);
+    if (token.endsWith("es") && token.length > 5) return token.slice(0, -2);
+    if (token.endsWith("s")) return token.slice(0, -1);
+    return token;
+}
+
+function answerTokens(value) {
+    return normalizeAnswer(value)
+        .split(" ")
+        .filter(Boolean)
+        .map((token) => {
+            const stemmed = stemAnswerToken(token);
+            return ANSWER_SYNONYMS[stemmed] || stemmed;
+        });
+}
+
+function isAnswerCorrect(rawAnswer, item) {
+    const userTokens = answerTokens(rawAnswer);
+    if (!userTokens.length) return false;
+    const userPhrase = userTokens.join(" ");
+    const accepted = [answerText(item), ...(Array.isArray(item?.aliases) ? item.aliases : [])];
+
+    for (const candidate of accepted) {
+        const expectedTokens = answerTokens(candidate);
+        if (!expectedTokens.length) continue;
+        const expectedPhrase = expectedTokens.join(" ");
+        if (userPhrase === expectedPhrase) return true;
+        if (userPhrase.length >= 4 && expectedPhrase.includes(userPhrase)) return true;
+
+        if (userTokens.length >= 3) {
+            const userSet = new Set(userTokens);
+            const expectedSet = new Set(expectedTokens);
+            const shared = [...userSet].filter((token) => expectedSet.has(token)).length;
+            const union = new Set([...userSet, ...expectedSet]).size;
+            if (union && shared / union >= 0.8) return true;
+        }
+    }
+    return false;
+}
+
 function showNextButton() {
     nextQuestionBtn.hidden = false;
     nextQuestionBtn.textContent = quizState.queue.size > 0 ? "Next question" : "Finish quiz";
@@ -685,6 +776,8 @@ function renderQuizQuestion() {
     quizFeedback.hidden = true;
     quizFeedback.className = "quiz-feedback";
     quizFeedback.textContent = "";
+    quizSource.hidden = true;
+    quizSource.textContent = "";
     quizAnswerInput.value = "";
     quizState.current = null;
 
@@ -704,6 +797,9 @@ function renderQuizQuestion() {
     const item = card.question;
     quizProgress.textContent = `Question ${quizState.asked} of ${quizState.asked + quizState.queue.size}`;
     quizQuestion.textContent = questionText(item) || "(No question text)";
+    const source = sourceText(item);
+    quizSource.hidden = !source;
+    quizSource.textContent = source ? `Source: ${source}` : "";
 
     if (answerText(item)) {
         answerEntry.hidden = false;
@@ -717,10 +813,9 @@ function renderQuizQuestion() {
 }
 
 function checkAnswer() {
-    const answer = answerText(quizState.current?.question);
-    const userAnswer = normalizeAnswer(quizAnswerInput.value);
-    const expected = normalizeAnswer(answer);
-    const correct = userAnswer === expected || (userAnswer.length >= 4 && expected.includes(userAnswer));
+    const item = quizState.current?.question;
+    const answer = answerText(item);
+    const correct = isAnswerCorrect(quizAnswerInput.value, item);
 
     if (correct) quizState.correct += 1;
     else requeueCurrent();

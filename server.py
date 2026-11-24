@@ -3,6 +3,7 @@ import binascii
 import io
 import os
 import re
+import statistics
 from collections import Counter
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
@@ -31,6 +32,18 @@ try:
     from pypdf import PdfReader
 except ImportError:  
     PdfReader = None
+try:
+    import pdfplumber
+except ImportError:  
+    pdfplumber = None
+try:
+    from PIL import Image
+except ImportError:  
+    Image = None
+try:
+    import pytesseract
+except ImportError:  
+    pytesseract = None
 
 BASE_DIR = Path(__file__).resolve().parent
 MAX_FILE_BYTES = 10 * 1024 * 1024  # 10 MB
@@ -47,6 +60,16 @@ WEAK_ANSWER_STARTS = {
     "which", "who", "what", "also", "above", "below", "following", "same",
     "not", "never", "both", "each", "all", "some", "many",
 }
+
+
+class SourceLine(str):
+    """A text line that remembers the section and page it came from."""
+
+    def __new__(cls, text, section="", page=None):
+        instance = super().__new__(cls, " ".join(str(text or "").split()))
+        instance.section = str(section or "").strip()
+        instance.page = page
+        return instance
 
 
 BOILERPLATE_LINE_PATTERNS = (
@@ -125,6 +148,63 @@ def remove_repeated_lines(text, minimum=3, max_length=100):
     return "\n".join(kept)
 
 
+def iter_source_lines(content):
+    if isinstance(content, str) and not isinstance(content, SourceLine):
+        for line in content.splitlines():
+            yield SourceLine(line)
+        return
+    for segment in content:
+        text = str(segment)
+        for line in text.splitlines():
+            yield SourceLine(
+                line,
+                getattr(segment, "section", ""),
+                getattr(segment, "page", None),
+            )
+
+
+def normalize_segments(segments, minimum=3, max_length=100):
+    normalized = []
+    for segment in iter_source_lines(segments):
+        line = normalize_extracted_text(str(segment)).strip()
+        if line:
+            normalized.append(SourceLine(line, segment.section, segment.page))
+
+    counts = Counter(str(line) for line in normalized)
+    footer_counts = Counter(_footer_key(str(line)) for line in normalized)
+    kept = []
+    for line in normalized:
+        text = str(line)
+        if len(text) > max_length:
+            kept.append(line)
+            continue
+        if counts[text] >= minimum:
+            continue
+        if footer_counts[_footer_key(text)] >= 2 and not re.search(r"[.!?]$", text):
+            continue
+        kept.append(line)
+    return kept
+
+
+def is_pdf_heading(text, font_size, bold, median_size, max_size):
+    text = text.strip()
+    if not text or len(text) > 100 or text.endswith((".", "?", "!")):
+        return False
+    if re.match(r"^[-*/#>|]", text):
+        return False
+    words = re.findall(r"[A-Za-z][A-Za-z-]*", text)
+    word_count = len(text.split())
+    if len(words) < 2 or word_count > 12 or text.count(":") > 1:
+        return False
+
+    enlarged = font_size >= median_size * 1.25 or (bold and font_size >= median_size * 1.1)
+    if enlarged and font_size >= max_size * 0.72:
+        return True
+    if re.match(r"^(?:chapter|section|unit|module|lesson|part)\s+\w+", text, re.IGNORECASE):
+        return True
+    return text.isupper() and word_count <= 8
+
+
 def load_local_env():
     env_path = BASE_DIR / ".env"
     if not env_path.exists():
@@ -135,7 +215,7 @@ def load_local_env():
             continue
         key, value = line.split("=", 1)
         key = key.strip()
-        if key in {"MONGO_URI", "MONGO_DB", "MONGO_TIMEOUT_MS"}:
+        if key in {"MONGO_URI", "MONGO_DB", "MONGO_TIMEOUT_MS", "STUDYIOUS_OCR_LANG"}:
             os.environ.setdefault(key, value.strip().strip('"').strip("'"))
 
 
@@ -499,34 +579,85 @@ def read_docx(stream):
     if Document is None:
         raise RuntimeError("python-docx is not installed. Run: pip install python-docx")
     document = Document(stream)
-    lines = []
+    segments = []
+    current_section = ""
 
     try:
         from docx.table import Table
         from docx.text.paragraph import Paragraph
     except ImportError:
-        lines.extend(p.text for p in document.paragraphs if p.text.strip())
+        for paragraph in document.paragraphs:
+            text = paragraph.text.strip()
+            if text:
+                segments.append(SourceLine(text, current_section))
         for table in document.tables:
             for row in table.rows:
                 cells = [" ".join(cell.text.split()) for cell in row.cells]
                 if any(cells):
-                    lines.append(" | ".join(cells))
-        return remove_repeated_lines(normalize_extracted_text("\n".join(lines)))
+                    segments.append(SourceLine(" | ".join(cells), current_section))
+        return normalize_segments(segments)
+
+    def add_table(table):
+        rows = []
+        for row in table.rows:
+            cells = [" ".join(cell.text.split()) for cell in row.cells]
+            if any(cells):
+                rows.append(cells)
+        if not rows:
+            return
+
+        if len(rows) < 2:
+            segments.append(SourceLine(" | ".join(rows[0]), current_section))
+            return
+
+        headers = rows[0]
+        seen_headers = set()
+        for row in rows[1:]:
+            label = row[0].strip(" .;:") if row else ""
+            if not label:
+                continue
+            added = False
+            for index in range(1, min(len(row), len(headers))):
+                header = headers[index].strip(" .;:")
+                value = row[index].strip(" .;:")
+                header_key = header.lower()
+                if not header or not value or header_key in seen_headers:
+                    continue
+                seen_headers.add(header_key)
+                segments.append(SourceLine(
+                    f"The {header.lower()} for {label} is {value}.",
+                    current_section,
+                ))
+                added = True
+            if not added:
+                segments.append(SourceLine(" | ".join(row), current_section))
 
     for child in document.element.body.iterchildren():
         if child.tag.endswith("}p"):
             paragraph = Paragraph(child, document)
             text = paragraph.text.strip()
-            if text:
-                lines.append(text)
+            if not text:
+                continue
+            style = getattr(paragraph, "style", None)
+            style_name = str(getattr(style, "name", "") or "").lower()
+            is_heading = (
+                style_name.startswith("heading")
+                or style_name in {"title", "subtitle"}
+                or bool(re.match(
+                    r"^(?:chapter|section|unit|module|lesson|part)\s+\w+",
+                    text,
+                    re.IGNORECASE,
+                ))
+            )
+            if is_heading:
+                current_section = text
+                segments.append(SourceLine(text, current_section))
+            else:
+                segments.append(SourceLine(text, current_section))
         elif child.tag.endswith("}tbl"):
-            table = Table(child, document)
-            for row in table.rows:
-                cells = [" ".join(cell.text.split()) for cell in row.cells if cell.text.strip()]
-                if cells:
-                    lines.append(" | ".join(cells))
+            add_table(Table(child, document))
 
-    return remove_repeated_lines(normalize_extracted_text("\n".join(lines)))
+    return normalize_segments(segments)
 
 
 def extract_pdf_with_fitz(data):
@@ -534,11 +665,11 @@ def extract_pdf_with_fitz(data):
         raise RuntimeError("PyMuPDF is not installed. Run: pip install PyMuPDF")
 
     document = fitz.open(stream=data, filetype="pdf")
-    pages = []
+    segments = []
     try:
-        for page in document:
+        for page_number, page in enumerate(document, 1):
             page_height = page.rect.height
-            ordered_blocks = []
+            raw_lines = []
 
             for block in page.get_text("dict")["blocks"]:
                 if block.get("type") != 0:
@@ -546,75 +677,182 @@ def extract_pdf_with_fitz(data):
 
                 block_lines = []
                 for line in block.get("lines", []):
-                    text = "".join(span.get("text", "") for span in line.get("spans", []))
+                    spans = line.get("spans", [])
+                    text = "".join(span.get("text", "") for span in spans)
                     text = " ".join(text.split())
                     if not text:
                         continue
 
                     x0, y0, _, _ = line.get("bbox", (0, 0, 0, 0))
-                    font_size = max(
-                        (span.get("size", 0) for span in line.get("spans", [])),
-                        default=0,
-                    )
+                    font_size = max((span.get("size", 0) for span in spans), default=0)
+                    flags = max((span.get("flags", 0) for span in spans), default=0)
                     if y0 >= page_height * 0.90 and font_size < 11:
                         continue
-                    block_lines.append((y0, x0, text))
+                    block_lines.append((y0, x0, text, font_size, flags))
 
                 if not block_lines:
                     continue
 
                 block_lines.sort(key=lambda item: (item[0], item[1]))
-                block_y = min(line[0] for line in block_lines)
-                block_x = min(line[1] for line in block_lines)
+                block_y = block_lines[0][0]
                 order = block.get("number", 0)
                 if block_y >= page_height * 0.90:
                     order = 10 ** 6 + block_y
 
-                ordered_blocks.append((
-                    order,
-                    block_y,
-                    block_x,
-                    "\n".join(line[2] for line in block_lines),
-                ))
+                for y0, x0, text, font_size, flags in block_lines:
+                    raw_lines.append((order, y0, x0, text, font_size, flags))
 
-            ordered_blocks.sort(key=lambda item: (item[0], item[1], item[2]))
-            pages.append("\n".join(block[3] for block in ordered_blocks))
+            raw_lines.sort(key=lambda item: (item[0], item[1], item[2]))
+            sizes = [line[4] for line in raw_lines if line[4] > 0]
+            median_size = statistics.median(sizes) if sizes else 10
+            max_size = max(sizes, default=median_size)
+
+            current_section = ""
+            for _, _, _, text, font_size, flags in raw_lines:
+                bold = bool(flags & 16)
+                if is_pdf_heading(text, font_size, bold, median_size, max_size):
+                    current_section = text
+                segments.append(SourceLine(text, current_section, page_number))
     finally:
         document.close()
 
-    return "\n".join(pages)
+    return segments
+
+
+def extract_pdf_tables(data):
+    if pdfplumber is None:
+        return []
+
+    segments = []
+    try:
+        with pdfplumber.open(io.BytesIO(data)) as document:
+            for page_number, page in enumerate(document.pages, 1):
+                for table in page.extract_tables() or []:
+                    rows = []
+                    for row in table:
+                        cells = [" ".join(str(cell or "").split()) for cell in row]
+                        if any(cells):
+                            rows.append(cells)
+                    if len(rows) < 2:
+                        continue
+
+                    headers = rows[0]
+                    seen = set()
+                    for row in rows[1:]:
+                        label = row[0].strip(" .;:") if row else ""
+                        if not label:
+                            continue
+                        for index in range(1, min(len(row), len(headers))):
+                            header = headers[index].strip(" .;:")
+                            value = row[index].strip(" .;:")
+                            if not header or not value:
+                                continue
+                            key = (header.lower(), label.lower(), value.lower())
+                            if key in seen:
+                                continue
+                            seen.add(key)
+                            fact = f"The {header.lower()} for {label} is {value}."
+                            segments.append(SourceLine(fact, "", page_number))
+    except Exception:
+        return []
+    return segments
+
+
+def ocr_pdf_pages(data, wanted_pages=None):
+    if fitz is None or Image is None or pytesseract is None:
+        raise RuntimeError(
+            "OCR is unavailable. Install pytesseract, Pillow, and the Tesseract "
+            "OCR engine to read scanned PDFs locally."
+        )
+    try:
+        pytesseract.get_tesseract_version()
+    except Exception as exc:
+        raise RuntimeError(
+            "Tesseract OCR is not installed. Install the Tesseract engine to "
+            "generate questions from scanned PDFs on this machine."
+        ) from exc
+
+    wanted = set(wanted_pages) if wanted_pages else None
+    language = os.environ.get("STUDYIOUS_OCR_LANG", "eng")
+    segments = []
+    document = fitz.open(stream=data, filetype="pdf")
+    try:
+        for page_number, page in enumerate(document, 1):
+            if wanted is not None and page_number not in wanted:
+                continue
+            pixmap = page.get_pixmap(matrix=fitz.Matrix(2, 2), alpha=False)
+            image = Image.frombytes("RGB", (pixmap.width, pixmap.height), pixmap.samples)
+            text = pytesseract.image_to_string(image, lang=language)
+            section = f"OCR page {page_number}"
+            for line in text.splitlines():
+                if line.strip():
+                    segments.append(SourceLine(line, section, page_number))
+    finally:
+        document.close()
+    return segments
 
 
 def read_pdf(stream):
     data = stream.read()
-    text = ""
+    segments = []
 
     if fitz is not None:
         try:
-            text = extract_pdf_with_fitz(data)
+            segments = extract_pdf_with_fitz(data)
         except Exception:
-            text = ""
+            segments = []
 
-    if len(text.strip()) < 20 and PdfReader is not None:
+    if sum(len(str(line)) for line in segments) < 20 and PdfReader is not None:
         try:
             reader = PdfReader(io.BytesIO(data))
-            pages = []
-            for page in reader.pages:
+            fallback = []
+            for page_number, page in enumerate(reader.pages, 1):
                 try:
-                    pages.append(page.extract_text(extraction_mode="layout") or "")
+                    text = page.extract_text(extraction_mode="layout") or ""
                 except TypeError:
-                    pages.append(page.extract_text() or "")
-            text = "\n".join(pages)
+                    text = page.extract_text() or ""
+                fallback.append(SourceLine(text, "", page_number))
+            segments = fallback
         except Exception:
             pass
 
-    normalized = normalize_extracted_text(text)
-    if len(normalized.strip()) < 20:
+    segments = normalize_segments(segments)
+
+    table_segments = extract_pdf_tables(data)
+    section_by_page = {}
+    for line in segments:
+        if line.section and line.page:
+            section_by_page[line.page] = line.section
+    for line in table_segments:
+        line.section = section_by_page.get(line.page, "")
+    segments.extend(normalize_segments(table_segments))
+
+    page_count = max((line.page or 0 for line in segments), default=0)
+    if not page_count and fitz is not None:
+        try:
+            document = fitz.open(stream=data, filetype="pdf")
+            page_count = document.page_count
+            document.close()
+        except Exception:
+            page_count = 0
+
+    page_counts = Counter(line.page for line in segments if line.page)
+    low_text_pages = [
+        page_number for page_number in range(1, page_count + 1)
+        if page_counts[page_number] < 20
+    ]
+    if low_text_pages:
+        try:
+            segments.extend(normalize_segments(ocr_pdf_pages(data, low_text_pages)))
+        except RuntimeError as exc:
+            if sum(len(str(line)) for line in segments) < 20:
+                raise
+
+    if sum(len(str(line)) for line in segments) < 20:
         raise RuntimeError(
-            "No readable text was found in this PDF. Scanned or image-only "
-            "PDFs need OCR before questions can be generated."
+            "No readable text was found in this PDF. OCR did not recover any usable text."
         )
-    return remove_repeated_lines(normalized)
+    return segments
 
 
 # Key-points remind when user does file upload for setting up quiz
@@ -677,25 +915,6 @@ def is_boilerplate(line):
     return any(pattern.match(line.strip()) for pattern in BOILERPLATE_LINE_PATTERNS)
 
 
-def is_noise(line):
-    line = line.strip()
-    if not line or is_boilerplate(line):
-        return True
-    if len(line) < 20 or len(line) > 260:
-        return True
-    if re.search(r"[•▪◦∙|→]", line) or line.count(";") >= 2:
-        return True
-    words = re.findall(r"[A-Za-z]+", line)
-    if len(words) < 5 or line.isupper():
-        return True
-    if len(re.findall(r"\b\d+[.)]\b", line)) >= 2:
-        return True
-    lower = line.lower()
-    if any(re.search(pattern, lower) for pattern in NOISE_PATTERNS):
-        return True
-    return False
-
-
 def is_quiz_fact(line):
     if is_noise(line) or "?" in line:
         return False
@@ -724,20 +943,24 @@ def split_sentences(line):
 def split_into_candidates(text):
     candidates = []
     buffer = ""
+    buffer_section = ""
+    buffer_page = None
 
-    def add(line):
+    def add(line, section="", page=None):
         line = strip_leading_markers(line.strip())
         if line and not is_noise(line):
-            candidates.append(line)
+            candidates.append(SourceLine(line, section, page))
 
     def flush():
-        nonlocal buffer
+        nonlocal buffer, buffer_section, buffer_page
         if buffer:
-            add(buffer)
+            add(buffer, buffer_section, buffer_page)
             buffer = ""
+            buffer_section = ""
+            buffer_page = None
 
-    for raw_line in text.splitlines():
-        line = re.sub(r"\s+", " ", raw_line).strip()
+    for source_line in iter_source_lines(text):
+        line = str(source_line).strip()
         if not line:
             flush()
             continue
@@ -751,22 +974,36 @@ def split_into_candidates(text):
         if len(sentences) > 1:
             flush()
             for sentence in sentences:
-                add(sentence)
+                add(sentence, source_line.section, source_line.page)
             continue
 
-        if buffer and len(buffer) > 40 and not re.search(r"[.!?;:]$", buffer):
+        can_join = (
+            buffer
+            and len(buffer) > 40
+            and not re.search(r"[.!?;:]$", buffer)
+            and buffer_section == source_line.section
+            and buffer_page == source_line.page
+        )
+        if can_join:
             buffer += " " + line
         else:
             flush()
             buffer = line
+            buffer_section = source_line.section
+            buffer_page = source_line.page
 
     flush()
     return candidates
 
 
 def is_noise(line):
+    line = line.strip()
     lower = line.lower()
+    if not line or is_boilerplate(line):
+        return True
     if len(line) < 12 or len(line) > 400:
+        return True
+    if re.search(r"[•▪◦∙|]", line) or line.count(";") >= 2:
         return True
     words = re.findall(r"[A-Za-z]+", line)
     if len(words) < 3 or (line.isupper() and len(line) > 80):
@@ -924,8 +1161,10 @@ def extract_key_points(text, limit=MAX_KEY_POINTS):
     seen = set()
     scored = []
 
-    for index, line in enumerate(candidates):
-        line = strip_leading_markers(line.strip())
+    for index, source_line in enumerate(candidates):
+        line = strip_leading_markers(str(source_line).strip())
+        if isinstance(source_line, SourceLine):
+            line = SourceLine(line, source_line.section, source_line.page)
         if not is_quiz_fact(line):
             continue
         key = re.sub(r"[^a-z0-9]+", " ", line.lower()).strip()
@@ -937,24 +1176,41 @@ def extract_key_points(text, limit=MAX_KEY_POINTS):
     if not scored:
         return [line for line in candidates if is_quiz_fact(line)][:limit]
 
-    
-    sections = min(4, max(1, limit))
-    width = max(1, (len(scored) + sections - 1) // sections)
-    buckets = [scored[start:start + width] for start in range(0, len(scored), width)]
-    ranked_buckets = [
-        selection_sort(bucket, key=lambda item: (-item[0], item[1]))
-        for bucket in buckets
-    ]
+    section_groups = {}
+    for item in scored:
+        section = getattr(item[2], "section", "") or "General"
+        section_groups.setdefault(section, []).append(item)
 
     selected = []
-    for position in range(width):
-        for bucket in ranked_buckets:
-            if position < len(bucket):
-                selected.append(bucket[position])
-                if len(selected) >= limit:
-                    break
-        if len(selected) >= limit:
-            break
+    if any(section != "General" for section in section_groups):
+        ranked_groups = [
+            selection_sort(group, key=lambda item: (-item[0], item[1]))
+            for group in section_groups.values()
+        ]
+        position = 0
+        while len(selected) < limit and any(position < len(group) for group in ranked_groups):
+            for group in ranked_groups:
+                if position < len(group):
+                    selected.append(group[position])
+                    if len(selected) >= limit:
+                        break
+            position += 1
+    else:
+        sections = min(4, max(1, limit))
+        width = max(1, (len(scored) + sections - 1) // sections)
+        buckets = [scored[start:start + width] for start in range(0, len(scored), width)]
+        ranked_buckets = [
+            selection_sort(bucket, key=lambda item: (-item[0], item[1]))
+            for bucket in buckets
+        ]
+        for position in range(width):
+            for bucket in ranked_buckets:
+                if position < len(bucket):
+                    selected.append(bucket[position])
+                    if len(selected) >= limit:
+                        break
+            if len(selected) >= limit:
+                break
 
     selected = selection_sort(selected, key=lambda item: item[1])
     return [line for _, _, line in selected]
@@ -1158,6 +1414,30 @@ def answers_similar(first, second):
     return len(left & right) / len(left | right) >= 0.72
 
 
+def answer_variants(answer):
+    base = clean_answer(answer)
+    variants = []
+
+    def add(value):
+        value = clean_answer(value)
+        if len(value) >= 3 and value.lower() not in variants:
+            variants.append(value.lower())
+
+    add(base)
+    add(re.sub(r"^to\s+", "", base, flags=re.IGNORECASE))
+    add(re.sub(r"\s*\([^)]*\)", "", base))
+
+    parts = re.split(
+        r"\s+(?:or|also called|also known as|aka)\s+",
+        base,
+        flags=re.IGNORECASE,
+    )
+    for part in parts:
+        add(part)
+
+    return variants
+
+
 def generate_questions(text, limit=10, topics=None):
     points = extract_key_points(text, limit=max(limit * 3, 30))
     topics = topics if topics is not None else topic_words(points)
@@ -1186,6 +1466,13 @@ def generate_questions(text, limit=10, topics=None):
         qa["topics"] = sorted(
             line_topic_terms(f"{qa['question']} {qa['answer']}", topics)
         )[:MAX_GRAPH_NEIGHBORS]
+        qa["aliases"] = answer_variants(qa["answer"])
+        source = {
+            "section": getattr(point, "section", ""),
+            "page": getattr(point, "page", None),
+        }
+        if source["section"] or source["page"]:
+            qa["source"] = source
         candidates.append(qa)
 
     if len(candidates) <= limit:
@@ -1203,6 +1490,15 @@ def generate_questions(text, limit=10, topics=None):
         ),
     )
     return [qa for _, qa in ranked[:limit]]
+
+
+def requested_question_count():
+    raw = request.form.get("question_count", request.args.get("question_count", 10))
+    try:
+        count = int(str(raw).strip())
+    except (TypeError, ValueError):
+        count = 10
+    return min(max(count, 1), MAX_QUESTIONS)
 
 
 # Verifies what file type is uploaded
@@ -1236,10 +1532,15 @@ def upload():
     except Exception as exc:
         return jsonify(error=f"Could not read the file: {exc}"), 422
 
+    requested_count = requested_question_count()
     concept_graph = build_concept_graph(text)
     questions = generate_questions(
-        text, limit=min(10, MAX_QUESTIONS), topics=set(concept_graph)
+        text, limit=requested_count, topics=set(concept_graph)
     )
+    ocr_pages = sorted({
+        line.page for line in text
+        if getattr(line, "section", "").startswith("OCR") and line.page
+    })
 
     file_oid = ObjectId()
     file_id = str(file_oid)
@@ -1264,6 +1565,8 @@ def upload():
         questions=questions,
         concept_graph=concept_graph,
         extracted_count=len(questions),
+        requested_count=requested_count,
+        ocr_pages=ocr_pages,
     )
 
 
@@ -1324,6 +1627,23 @@ def normalize_question(item):
         file_id = item.get("file_id")
         if isinstance(file_id, str) and file_id:
             result["file_id"] = file_id
+
+        aliases = item.get("aliases")
+        if isinstance(aliases, list):
+            result["aliases"] = [
+                str(alias).strip().lower() for alias in aliases if str(alias).strip()
+            ][:12]
+
+        source = item.get("source")
+        if isinstance(source, dict):
+            section = str(source.get("section") or "").strip()
+            page = source.get("page")
+            try:
+                page = int(page) if page not in (None, "") else None
+            except (TypeError, ValueError):
+                page = None
+            if section or page:
+                result["source"] = {"section": section, "page": page}
         return result
     question = str(item).strip()
     return question or None

@@ -385,6 +385,40 @@ body.dark .small-btn { color: #fff; }
     font-size: 14px;
 }
 
+.upload-controls {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    gap: 12px;
+    margin-bottom: 14px;
+}
+
+.upload-controls .field {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.upload-controls .field span {
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.upload-controls select {
+    height: 44px;
+    padding: 0 12px;
+    border: 1px solid blueviolet;
+    border-radius: 8px;
+    background: transparent;
+    color: inherit;
+    font-size: 15px;
+}
+
+body.dark .upload-controls select {
+    background: #18191a;
+    border-color: #8b5cf6;
+}
+
 .file-upload {
     display: flex;
     justify-content: center;
@@ -498,6 +532,12 @@ body.dark .quiz-progress { color: #fff; }
     border-radius: 10px;
     font-size: 18px;
     line-height: 1.5;
+}
+
+.quiz-source {
+    margin: 8px 0 0;
+    font-size: 13px;
+    opacity: 0.75;
 }
 
 .answer-entry {
